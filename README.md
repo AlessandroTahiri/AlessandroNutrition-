@@ -1,22 +1,14 @@
-# Alessandro Nutrition 2.0
+# Alessandro Nutrition 2.1
 
-Versione aggiornata del progetto Android.
+Versione aggiornata dell'app Android personale.
 
-## Sezioni
-- Oggi: giornata divisa cronologicamente, pasti modificabili, calorie/macronutrienti stimati, attività modificabile, acqua e promemoria.
-- Calendario: viste Giorno / Settimana / Mese / Anno e impegni con categorie visive.
-- Progressi: peso iniziale/giornaliero, disciplina alimentazione-idratazione-attività, piccoli traguardi e trofei.
-- Allenamenti: risveglio muscolare mattutino separato dagli allenamenti a casa nei giorni senza palestra.
-- Piano: target calorico e idratazione modificabili anche in base alle indicazioni del nutrizionista.
-
-## Modifiche alimentari
-Ogni pasto consente:
-1. Solo oggi
-2. Da oggi in poi
-3. Dal giorno scelto
-
-## Promemoria
-I promemoria sono disponibili su pasti, attività e allenamenti. Le notifiche usano messaggi ironici variabili in base alla categoria.
-
-## Nota calorie
-Il calcolo automatico usa un database locale essenziale e la forma "alimento + grammi". È una stima e non sostituisce i valori indicati dal nutrizionista.
+## Novità 2.1
+- Calendario ripulito: un'unica scheda giornaliera con Alimentazione e Impegni separati.
+- Gli impegni del calendario sono modificabili ed eliminabili dopo la creazione.
+- I promemoria possono essere riaperti da un impegno e reimpostati.
+- Orari di risveglio, colazione, spuntino, pranzo, sera e attività modificabili.
+- Durata degli esercizi di risveglio muscolare modificabile e salvata sul telefono.
+- Piano della nutrizionista organizzato in 4 settimane, con 7 giorni modificabili per settimana e copia della settimana.
+- Nuova area Progressi/Trofei con obiettivi, bacheca, trofei bloccati/sbloccati, progresso e dettaglio.
+- Nuova icona Alessandro Nutrition.
+- Workflow GitHub Actions configurato con Gradle 8.13 per generare app-debug.apk.
