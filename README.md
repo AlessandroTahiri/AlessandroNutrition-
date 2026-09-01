@@ -1,14 +1,16 @@
-# Alessandro Nutrition 2.1
+# Alessandro Nutrition v2.3
 
-Versione aggiornata dell'app Android personale.
+Versione Android Studio aggiornata con interfaccia scura/chiara/automatica e le principali funzioni approvate.
 
-## Novità 2.1
-- Calendario ripulito: un'unica scheda giornaliera con Alimentazione e Impegni separati.
-- Gli impegni del calendario sono modificabili ed eliminabili dopo la creazione.
-- I promemoria possono essere riaperti da un impegno e reimpostati.
-- Orari di risveglio, colazione, spuntino, pranzo, sera e attività modificabili.
-- Durata degli esercizi di risveglio muscolare modificabile e salvata sul telefono.
-- Piano della nutrizionista organizzato in 4 settimane, con 7 giorni modificabili per settimana e copia della settimana.
-- Nuova area Progressi/Trofei con obiettivi, bacheca, trofei bloccati/sbloccati, progresso e dettaglio.
-- Nuova icona Alessandro Nutrition.
-- Workflow GitHub Actions configurato con Gradle 8.13 per generare app-debug.apk.
+## Novità v2.3
+- Home con saluto dinamico e riepilogo giornata.
+- Allenamenti modificabili: tipo, nome, data/ora, note e **un unico campo libero per il tempo impiegato**.
+- Programmazioni ricorrenti multiple con giorni della settimana, periodo e orario.
+- Piano alimentare: selezione **Settimana 1–4** e **Lun–Dom**.
+- Calendario mensile con **＋ direttamente in ogni giorno**.
+- Eventi del calendario con categoria, titolo, ora, durata libera e note.
+- Promemoria/notifica individuale per ogni elemento: ON/OFF e preavviso opzionale in **giorni + ore + minuti**.
+- Menu con Spesa, Diario, Obiettivi, Profilo e Impostazioni tema.
+
+## Build APK
+Il workflow GitHub Actions `Build Android APK` crea l'artifact `AlessandroNutrition-v2.3-debug`.

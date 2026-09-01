@@ -22,7 +22,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -30,8 +30,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
@@ -40,103 +40,169 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.time.*
 import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
+import java.time.format.TextStyle
 import java.util.Locale
-import kotlin.math.roundToInt
+import kotlin.math.absoluteValue
 
-// ---------- MODELLI ----------
+private val Aqua = Color(0xFF32D6C5)
+private val DarkBg = Color(0xFF07111E)
+private val DarkCard = Color(0xFF101D2B)
+private val DarkCard2 = Color(0xFF142435)
+private val DarkText = Color(0xFFF6FAFF)
+private val DarkMuted = Color(0xFFB8C7D9)
+private val LightBg = Color(0xFFF4F7FA)
+private val LightCard = Color.White
+private val LightText = Color(0xFF101820)
+private val LightMuted = Color(0xFF52606D)
+
+private const val PREFS = "nutrition_v22" // keep key for seamless v2.2 -> v2.3 migration
+private const val CHANNEL = "nutrition_reminders"
+
 data class PlanDay(
     val date: String,
-    val dayNumber: Int,
-    val activity: String,
-    val breakfastTitle: String,
     val breakfast: String,
     val snack: String,
-    val lunchTitle: String,
-    val lunch: String,
-    val mealTag: String,
-    val fasting: String,
-    val water: String
+    val lunch: String
 )
 
-data class NutritionEstimate(val kcal: Int, val protein: Int, val carbs: Int, val fat: Int)
+data class ReminderSettings(
+    val enabled: Boolean = true,
+    val daysBefore: Int = 0,
+    val hoursBefore: Int = 0,
+    val minutesBefore: Int = 10
+)
 
-data class CategoryStyle(val emoji: String, val label: String, val color: Color)
+data class WorkoutEntry(
+    val id: Long,
+    val date: String,
+    val type: String,
+    val title: String,
+    val time: String,
+    val durationText: String,
+    val notes: String,
+    val done: Boolean,
+    val reminder: ReminderSettings
+)
 
-val WakeStyle = CategoryStyle("🌅", "Risveglio", Color(0xFFF59E0B))
-val BreakfastStyle = CategoryStyle("🍳", "Colazione", Color(0xFFFB923C))
-val SnackStyle = CategoryStyle("🥤", "Spuntino", Color(0xFF38BDF8))
-val LunchStyle = CategoryStyle("🍽️", "Pranzo", Color(0xFFEF4444))
-val WaterStyle = CategoryStyle("💧", "Idratazione", Color(0xFF06B6D4))
-val WalkStyle = CategoryStyle("🚶", "Camminata", Color(0xFF22C55E))
-val GymStyle = CategoryStyle("🏋️", "Palestra", Color(0xFF3B82F6))
-val HomeStyle = CategoryStyle("🏠", "Allenamento a casa", Color(0xFFA855F7))
-val WorkStyle = CategoryStyle("💼", "Lavoro", Color(0xFF64748B))
-val EveningStyle = CategoryStyle("🌙", "Sera", Color(0xFF6366F1))
+data class RecurringRule(
+    val id: Long,
+    val title: String,
+    val category: String,
+    val weekdays: Set<Int>,
+    val time: String,
+    val startDate: String,
+    val endDate: String,
+    val reminder: ReminderSettings
+)
+
+data class CalendarEvent(
+    val id: Long,
+    val date: String,
+    val category: String,
+    val title: String,
+    val time: String,
+    val durationText: String,
+    val notes: String,
+    val reminder: ReminderSettings
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         createNotificationChannel(this)
         val plan = loadPlan(this)
-        setContent {
-            MaterialTheme(colorScheme = lightColorScheme(primary = Color(0xFF2563EB))) {
-                NutritionApp(plan, this)
-            }
-        }
+        setContent { NutritionApp(plan) }
     }
 }
 
 fun loadPlan(context: Context): List<PlanDay> {
-    val json = context.assets.open("annual_plan.json").bufferedReader().use { it.readText() }
-    val array = JSONArray(json)
-    return buildList {
-        for (i in 0 until array.length()) {
-            val o = array.getJSONObject(i)
-            add(
-                PlanDay(
-                    date = o.getString("date"), dayNumber = o.getInt("dayNumber"), activity = o.getString("activity"),
-                    breakfastTitle = o.getString("breakfastTitle"), breakfast = o.getString("breakfast"), snack = o.getString("snack"),
-                    lunchTitle = o.getString("lunchTitle"), lunch = o.getString("lunch"), mealTag = o.getString("mealTag"),
-                    fasting = o.getString("fasting"), water = o.getString("water")
+    return try {
+        val json = context.assets.open("annual_plan.json").bufferedReader().use { it.readText() }
+        val arr = JSONArray(json)
+        buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                add(
+                    PlanDay(
+                        date = o.optString("date"),
+                        breakfast = o.optString("breakfast", "Colazione da definire"),
+                        snack = o.optString("snack", "Spuntino da definire"),
+                        lunch = o.optString("lunch", "Pranzo da definire")
+                    )
                 )
-            )
+            }
         }
+    } catch (_: Exception) {
+        emptyList()
     }
 }
 
-// ---------- APP ----------
 @Composable
-fun NutritionApp(plan: List<PlanDay>, context: Context) {
-    val prefs = remember { context.getSharedPreferences("nutrition_v2", Context.MODE_PRIVATE) }
-    var tab by rememberSaveable { mutableIntStateOf(prefs.getInt("last_tab", 0).coerceIn(0, 4)) }
+fun NutritionApp(plan: List<PlanDay>) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
+    var nav by rememberSaveable { mutableIntStateOf(prefs.getInt("nav", 0).coerceIn(0, 3)) }
+    var menuScreen by rememberSaveable { mutableStateOf<String?>(null) }
+    var themeMode by rememberSaveable { mutableStateOf(prefs.getString("theme", "dark") ?: "dark") }
 
-    LaunchedEffect(tab) { prefs.edit().putInt("last_tab", tab).apply() }
+    val dark = when (themeMode) {
+        "light" -> false
+        "system" -> androidx.compose.foundation.isSystemInDarkTheme()
+        else -> true
+    }
+    val scheme = if (dark) darkColorScheme(
+        primary = Aqua,
+        background = DarkBg,
+        surface = DarkCard,
+        surfaceVariant = DarkCard2,
+        onBackground = DarkText,
+        onSurface = DarkText,
+        onSurfaceVariant = DarkMuted
+    ) else lightColorScheme(
+        primary = Color(0xFF008C82),
+        background = LightBg,
+        surface = LightCard,
+        surfaceVariant = Color(0xFFEAF0F4),
+        onBackground = LightText,
+        onSurface = LightText,
+        onSurfaceVariant = LightMuted
+    )
 
+    LaunchedEffect(nav) { prefs.edit().putInt("nav", nav).apply() }
     NotificationPermissionRequest()
 
-    Scaffold(
-        bottomBar = {
-            NavigationBar {
-                val tabs = listOf("🏠" to "Oggi", "📅" to "Calendario", "📈" to "Progressi", "🏃" to "Allenamenti", "📋" to "Piano")
-                tabs.forEachIndexed { i, (icon, label) ->
-                    NavigationBarItem(
-                        selected = tab == i,
-                        onClick = { tab = i },
-                        icon = { Text(icon, fontSize = 20.sp) },
-                        label = { Text(label, maxLines = 1, fontSize = 10.sp) }
-                    )
+    MaterialTheme(colorScheme = scheme) {
+        Scaffold(
+            containerColor = MaterialTheme.colorScheme.background,
+            bottomBar = {
+                if (menuScreen == null) {
+                    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                        val tabs = listOf("🏠" to "Home", "🏋️" to "Allenamenti", "🍽️" to "Piano", "📅" to "Calendario")
+                        tabs.forEachIndexed { index, p ->
+                            NavigationBarItem(
+                                selected = nav == index,
+                                onClick = { nav = index },
+                                icon = { Text(p.first, fontSize = 20.sp) },
+                                label = { Text(p.second, fontSize = 10.sp, maxLines = 1) }
+                            )
+                        }
+                    }
                 }
             }
-        }
-    ) { padding ->
-        Box(Modifier.padding(padding).fillMaxSize()) {
-            when (tab) {
-                0 -> TodayScreen(plan, prefs, context)
-                1 -> CalendarScreen(plan, prefs, context)
-                2 -> ProgressScreen(plan, prefs)
-                3 -> TrainingScreen(prefs, context)
-                else -> PlanScreen(prefs)
+        ) { pad ->
+            Box(Modifier.padding(pad).fillMaxSize()) {
+                if (menuScreen != null) {
+                    SecondaryScreen(menuScreen!!, prefs, themeMode, onTheme = {
+                        themeMode = it; prefs.edit().putString("theme", it).apply()
+                    }, onBack = { menuScreen = null })
+                } else {
+                    when (nav) {
+                        0 -> HomeScreen(plan, prefs, context, onMenu = { menuScreen = "menu" })
+                        1 -> TrainingScreen(prefs, context)
+                        2 -> PlanScreen(plan, prefs)
+                        else -> CalendarScreen(prefs, context)
+                    }
+                }
             }
         }
     }
@@ -150,493 +216,679 @@ fun NotificationPermissionRequest() {
     }
 }
 
-// ---------- OGGI ----------
 @Composable
-fun TodayScreen(plan: List<PlanDay>, prefs: SharedPreferences, context: Context) {
+fun ScreenTitle(title: String, subtitle: String? = null, trailing: (@Composable () -> Unit)? = null) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+            subtitle?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp) }
+        }
+        trailing?.invoke()
+    }
+}
+
+@Composable
+fun AppCard(content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(16.dp)
+    ) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content) }
+}
+
+@Composable
+fun CircleCheck(done: Boolean, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.size(42.dp).clickable { onClick() },
+        shape = CircleShape,
+        color = if (done) Aqua.copy(alpha = .18f) else Color.Transparent,
+        border = androidx.compose.foundation.BorderStroke(2.dp, if (done) Aqua else MaterialTheme.colorScheme.outline)
+    ) { Box(contentAlignment = Alignment.Center) { Text("✓", color = if (done) Aqua else MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold) } }
+}
+
+@Composable
+fun HomeScreen(plan: List<PlanDay>, prefs: SharedPreferences, context: Context, onMenu: () -> Unit) {
     val today = LocalDate.now()
-    val todayIndex = plan.indexOfFirst { it.date == today.toString() }.let { if (it >= 0) it else 0 }
-    var index by rememberSaveable { mutableIntStateOf(todayIndex.coerceIn(0, plan.lastIndex)) }
-    val day = plan[index]
-    val date = LocalDate.parse(day.date)
-    val key = day.date
-
-    val breakfast = remember(day.date) { mutableStateOf(resolveMealText(prefs, day.date, "breakfast", day.breakfast)) }
-    val snack = remember(day.date) { mutableStateOf(resolveMealText(prefs, day.date, "snack", day.snack)) }
-    val lunch = remember(day.date) { mutableStateOf(resolveMealText(prefs, day.date, "lunch", day.lunch)) }
-
-    var breakfastDone by remember(key) { mutableStateOf(prefs.getBoolean("${key}_done_breakfast", false)) }
-    var snackDone by remember(key) { mutableStateOf(prefs.getBoolean("${key}_done_snack", false)) }
-    var lunchDone by remember(key) { mutableStateOf(prefs.getBoolean("${key}_done_lunch", false)) }
-    var activityDone by remember(key) { mutableStateOf(prefs.getBoolean("${key}_done_activity", false)) }
-    var waterMl by remember(key) { mutableIntStateOf(prefs.getInt("${key}_water_ml", 0)) }
-    var showMealEditor by remember { mutableStateOf<String?>(null) }
-    var showReminderFor by remember { mutableStateOf<Pair<String, LocalTime>?>(null) }
-    var showActivityEditor by remember { mutableStateOf(false) }
-    var editTimeFor by remember { mutableStateOf<Pair<String,String>?>(null) }
-
-    val breakfastTime = prefs.getString("${key}_time_breakfast", "07:00") ?: "07:00"
-    val snackTime = prefs.getString("${key}_time_snack", "10:30") ?: "10:30"
-    val lunchTime = prefs.getString("${key}_time_lunch", "14:00") ?: "14:00"
-    val wakeTime = prefs.getString("${key}_time_wakeup", "06:30") ?: "06:30"
-    val eveningTime = prefs.getString("${key}_time_evening", "21:00") ?: "21:00"
-
-    val breakfastNutrition = estimateNutrition(breakfast.value)
-    val snackNutrition = estimateNutrition(snack.value)
-    val lunchNutrition = estimateNutrition(lunch.value)
-    val totalNutrition = NutritionEstimate(
-        breakfastNutrition.kcal + snackNutrition.kcal + lunchNutrition.kcal,
-        breakfastNutrition.protein + snackNutrition.protein + lunchNutrition.protein,
-        breakfastNutrition.carbs + snackNutrition.carbs + lunchNutrition.carbs,
-        breakfastNutrition.fat + snackNutrition.fat + lunchNutrition.fat
+    val name = prefs.getString("profile_name", "Alessandro") ?: "Alessandro"
+    val p = plan.firstOrNull { it.date == today.toString() }
+    val meals = listOf(
+        Triple("🍳 Colazione", "07:00", p?.breakfast ?: "Yogurt greco, avena e frutta"),
+        Triple("🥤 Spuntino mattutino", "10:30", p?.snack ?: "Shake proteico"),
+        Triple("🍽️ Pranzo", "14:00", p?.lunch ?: "Pollo, verdure e couscous"),
+        Triple("🍎 Spuntino pomeridiano", "16:30", "Frutta e mandorle"),
+        Triple("🍲 Cena", "20:00", "Pesce e verdure")
     )
-    val target = prefs.getInt("calorie_target", 1900)
-    val activityName = prefs.getString("${key}_activity_name", day.activity) ?: day.activity
-    val activityStyle = activityStyleFor(activityName)
-    val activityTime = prefs.getString("${key}_activity_time", "18:00") ?: "18:00"
-    val activityDuration = prefs.getInt("${key}_activity_duration", if (activityName.contains("Palestra", true)) 60 else 45)
-
-    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
-                Column { Text("Oggi", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold); Text(formatDate(day.date)) }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("${totalNutrition.kcal} / $target kcal", fontWeight = FontWeight.Bold)
-                    Text("P ${totalNutrition.protein}g · C ${totalNutrition.carbs}g · G ${totalNutrition.fat}g", style = MaterialTheme.typography.bodySmall)
+            ScreenTitle("Ciao $name 👋", "${today.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.ITALIAN).replaceFirstChar { it.uppercase() }} ${today.dayOfMonth} ${today.month.getDisplayName(TextStyle.FULL, Locale.ITALIAN)}") {
+                OutlinedButton(onClick = onMenu, contentPadding = PaddingValues(horizontal = 14.dp)) { Text("☰ Menu") }
+            }
+        }
+        item {
+            AppCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) { Text("Come sta andando oggi", fontWeight = FontWeight.Bold); Text("5 attività completate su 8", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    Text("63%", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold, fontSize = 24.sp)
+                }
+                LinearProgressIndicator(progress = { .63f }, modifier = Modifier.fillMaxWidth())
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("💧 6/8"); Text("😴 7h 20m"); Text("🏋️ 17:00"); Text("🌟 2") }
+            }
+        }
+        item { Text("🍽️ Alimentazione di oggi", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp) }
+        items(meals) { meal ->
+            var done by remember(meal.first) { mutableStateOf(prefs.getBoolean("today_${meal.first}", false)) }
+            AppCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) { Text(meal.first, fontWeight = FontWeight.Bold); Spacer(Modifier.width(8.dp)); Text("✏️", modifier = Modifier.clickable { }) }
+                        Text("${meal.second} · ${meal.third}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                        Text("🔔 Promemoria attivo", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                    }
+                    CircleCheck(done) { done = !done; prefs.edit().putBoolean("today_${meal.first}", done).apply() }
                 }
             }
         }
-        item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            OutlinedButton(onClick = { if (index > 0) index-- }, enabled = index > 0) { Text("← Ieri") }
-            OutlinedButton(onClick = { index = todayIndex }, enabled = index != todayIndex) { Text("Oggi") }
-            OutlinedButton(onClick = { if (index < plan.lastIndex) index++ }, enabled = index < plan.lastIndex) { Text("Domani →") }
-        } }
-
-        item { TimedActivityCard(WakeStyle, "Risveglio", wakeTime, "Acqua · vitamine · magnesio", onTime = { editTimeFor = "wakeup" to wakeTime }, onEdit = {}, onReminder = { showReminderFor = "Risveglio" to parseTime(wakeTime, LocalTime.of(6,30)) }) }
-        item { MealEditableCard(BreakfastStyle, "Colazione", breakfastTime, breakfast.value, breakfastNutrition, breakfastDone,
-            onChecked = { breakfastDone = it; prefs.edit().putBoolean("${key}_done_breakfast", it).apply() }, onEdit = { showMealEditor = "breakfast" }, onReminder = { showReminderFor = "Colazione" to parseTime(breakfastTime, LocalTime.of(7,0)) }, onTime = { editTimeFor = "breakfast" to breakfastTime }) }
-        item { MealEditableCard(SnackStyle, "Spuntino", snackTime, snack.value, snackNutrition, snackDone,
-            onChecked = { snackDone = it; prefs.edit().putBoolean("${key}_done_snack", it).apply() }, onEdit = { showMealEditor = "snack" }, onReminder = { showReminderFor = "Spuntino" to parseTime(snackTime, LocalTime.of(10,30)) }, onTime = { editTimeFor = "snack" to snackTime }) }
-        item { MealEditableCard(LunchStyle, "Pranzo", lunchTime, lunch.value, lunchNutrition, lunchDone,
-            onChecked = { lunchDone = it; prefs.edit().putBoolean("${key}_done_lunch", it).apply() }, onEdit = { showMealEditor = "lunch" }, onReminder = { showReminderFor = "Pranzo" to parseTime(lunchTime, LocalTime.of(14,0)) }, onTime = { editTimeFor = "lunch" to lunchTime }) }
-        item { ColoredCard(Color(0xFF64748B)) { Text("⏱️ Digiuno", fontWeight = FontWeight.Bold); Text(day.fasting); OutlinedButton(onClick = { showReminderFor = "Inizio digiuno" to parseTime(lunchTime, LocalTime.of(14,0)).plusHours(1) }) { Text("🔔 Promemoria") } } }
+        item { Text("🏋️ Attività di oggi", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp) }
         item {
-            ColoredCard(activityStyle.color) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column { Text("${activityStyle.emoji} Attività", fontWeight = FontWeight.Bold); Text("$activityName · $activityTime · $activityDuration min") }
-                    AssistChip(onClick = {}, label = { Text(activityStyle.label) })
+            AppCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("🏋️ Palestra ✏️", fontWeight = FontWeight.Bold)
+                        Text("17:00 · Total body", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("🔔 10 minuti prima", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                    }
+                    var done by remember { mutableStateOf(false) }
+                    CircleCheck(done) { done = !done }
                 }
+            }
+        }
+        item { Text("🌟 Vita personale", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp) }
+        item {
+            AppCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) { Text("🛒 Fare la spesa ✏️", fontWeight = FontWeight.Bold); Text("18:30 · 8 prodotti", color = MaterialTheme.colorScheme.onSurfaceVariant); Text("🔔 Promemoria attivo", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp) }
+                    var done by remember { mutableStateOf(false) }; CircleCheck(done) { done = !done }
+                }
+            }
+        }
+        item { AppCard { Text("📝 Resoconto della giornata", fontWeight = FontWeight.Bold); Text("Salva il resoconto nel calendario.", color = MaterialTheme.colorScheme.onSurfaceVariant); Button(onClick = { }, modifier = Modifier.fillMaxWidth()) { Text("Compila resoconto") } } }
+    }
+}
+
+@Composable
+fun TrainingScreen(prefs: SharedPreferences, context: Context) {
+    var workouts by remember { mutableStateOf(loadWorkouts(prefs)) }
+    var editing by remember { mutableStateOf<WorkoutEntry?>(null) }
+    var showNew by remember { mutableStateOf(false) }
+    var showRules by remember { mutableStateOf(false) }
+
+    if (editing != null || showNew) {
+        WorkoutEditor(
+            initial = editing,
+            onDismiss = { editing = null; showNew = false },
+            onSave = { w ->
+                workouts = if (editing == null) workouts + w else workouts.map { if (it.id == w.id) w else it }
+                saveWorkouts(prefs, workouts)
+                scheduleIfNeeded(context, w.title, LocalDate.parse(w.date), parseTime(w.time), w.reminder, w.id.toInt())
+                editing = null; showNew = false
+            }
+        )
+        return
+    }
+
+    if (showRules) {
+        RecurringRulesScreen(prefs, context, onBack = { showRules = false })
+        return
+    }
+
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { ScreenTitle("🏋️ Allenamenti", "Registra il tipo di allenamento e il tempo realmente impiegato") { IconButton(onClick = { showNew = true }) { Text("＋", fontSize = 28.sp) } } }
+        if (workouts.isEmpty()) {
+            item {
+                AppCard {
+                    Text("Nessun allenamento registrato", fontWeight = FontWeight.Bold)
+                    Text("Aggiungine uno e indica liberamente il tempo impiegato.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Button(onClick = { showNew = true }, modifier = Modifier.fillMaxWidth()) { Text("＋ Aggiungi allenamento") }
+                }
+            }
+        } else {
+            items(workouts.sortedByDescending { it.date }) { w ->
+                AppCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("🏋️ ${w.title}", fontWeight = FontWeight.Bold)
+                            Text("${formatDateShort(w.date)} · ${w.time} · ${w.durationText}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (w.reminder.enabled) "🔔 ${reminderLabel(w.reminder)}" else "🔕 Promemoria disattivato", color = if (w.reminder.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                        }
+                        IconButton(onClick = { editing = w }) { Text("✏️") }
+                        CircleCheck(w.done) {
+                            val updated = w.copy(done = !w.done); workouts = workouts.map { if (it.id == w.id) updated else it }; saveWorkouts(prefs, workouts)
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            AppCard {
+                Text("🔁 Programmazione fissa", fontWeight = FontWeight.ExtraBold)
+                Text("Crea tutte le programmazioni ricorrenti che vuoi.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Button(onClick = { showRules = true }, modifier = Modifier.fillMaxWidth()) { Text("Gestisci programmazioni ricorrenti") }
+            }
+        }
+    }
+}
+
+@Composable
+fun WorkoutEditor(initial: WorkoutEntry?, onDismiss: () -> Unit, onSave: (WorkoutEntry) -> Unit) {
+    var type by remember { mutableStateOf(initial?.type ?: "Total body") }
+    var title by remember { mutableStateOf(initial?.title ?: "Total body") }
+    var date by remember { mutableStateOf(initial?.date ?: LocalDate.now().toString()) }
+    var time by remember { mutableStateOf(initial?.time ?: "17:00") }
+    var duration by remember { mutableStateOf(initial?.durationText ?: "") }
+    var notes by remember { mutableStateOf(initial?.notes ?: "") }
+    var reminder by remember { mutableStateOf(initial?.reminder ?: ReminderSettings()) }
+
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { ScreenTitle(if (initial == null) "＋ Nuovo allenamento" else "✏️ Modifica allenamento") { TextButton(onClick = onDismiss) { Text("Annulla") } } }
+        item {
+            AppCard {
+                Text("Tipo di allenamento", fontWeight = FontWeight.Bold)
+                SimplePicker(type, listOf("Total body", "Forza", "Cardio", "CrossFit", "Camminata", "Mobilità", "Altro")) { type = it; if (title.isBlank() || title == initial?.type) title = it }
+                OutlinedTextField(title, { title = it }, label = { Text("Nome allenamento") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(duration, { duration = it }, label = { Text("Tempo impiegato") }, placeholder = { Text("Es. 45 min, 1 ora, 1h 20 min") }, modifier = Modifier.fillMaxWidth())
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { showActivityEditor = true }) { Text("✏️ Modifica") }
-                    OutlinedButton(onClick = { showReminderFor = activityName to parseTime(activityTime, LocalTime.of(18,0)) }) { Text("🔔 Promemoria") }
+                    OutlinedTextField(date, { date = it }, label = { Text("Data AAAA-MM-GG") }, modifier = Modifier.weight(1f))
+                    OutlinedTextField(time, { time = it }, label = { Text("Ora HH:MM") }, modifier = Modifier.weight(1f))
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = activityDone, onCheckedChange = { activityDone = it; prefs.edit().putBoolean("${key}_done_activity", it).apply() }); Text(if (activityDone) "Completata" else "Segna come completata") }
+                OutlinedTextField(notes, { notes = it }, label = { Text("Note") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
             }
         }
-        item { ColoredCard(WaterStyle.color) {
-            Text("💧 Idratazione", fontWeight = FontWeight.Bold); val targetMl = prefs.getInt("water_target_ml", 2500); Text("${"%.2f".format(waterMl/1000.0)} / ${"%.2f".format(targetMl/1000.0)} L")
-            LinearProgressIndicator(progress = { (waterMl.toFloat()/targetMl.coerceAtLeast(1)).coerceIn(0f,1f) }, modifier=Modifier.fillMaxWidth())
-            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { Button(onClick={waterMl+=250;prefs.edit().putInt("${key}_water_ml",waterMl).apply()}){Text("+ 250 ml")}; OutlinedButton(onClick={waterMl=(waterMl-250).coerceAtLeast(0);prefs.edit().putInt("${key}_water_ml",waterMl).apply()}){Text("− 250")}; OutlinedButton(onClick={showReminderFor="Bere acqua" to LocalTime.of(9,0)}){Text("🔔")} }
-        } }
-        item { TimedActivityCard(EveningStyle, "Sera", eveningTime, "Riepilogo giornata · note · preparazione per domani", onTime={editTimeFor="evening" to eveningTime}, onEdit={}, onReminder={showReminderFor="Riepilogo serale" to parseTime(eveningTime,LocalTime.of(21,0))}) }
-    }
-
-    showMealEditor?.let { meal ->
-        val current = when(meal){"breakfast"->breakfast.value;"snack"->snack.value;else->lunch.value}
-        MealEditDialog(title=when(meal){"breakfast"->"Colazione";"snack"->"Spuntino";else->"Pranzo"}, initial=current, date=date, onDismiss={showMealEditor=null},
-            onSave={text,mode,startDate->saveMealOverride(prefs,meal,date,text,mode,startDate);when(meal){"breakfast"->breakfast.value=text;"snack"->snack.value=text;else->lunch.value=text};showMealEditor=null},
-            onRestore={clearMealOverrideForDate(prefs,meal,date);val original=when(meal){"breakfast"->day.breakfast;"snack"->day.snack;else->day.lunch};when(meal){"breakfast"->breakfast.value=original;"snack"->snack.value=original;else->lunch.value=original};showMealEditor=null})
-    }
-    showReminderFor?.let { (label,time)-> ReminderDialog(label,date,time,context,onDismiss={showReminderFor=null}) }
-    if(showActivityEditor) ActivityEditDialog(activityName,activityTime,activityDuration,onDismiss={showActivityEditor=false}){name,time,duration->prefs.edit().putString("${key}_activity_name",name).putString("${key}_activity_time",time).putInt("${key}_activity_duration",duration).apply();showActivityEditor=false}
-    editTimeFor?.let { (type,initial) -> TimeEditDialog(type, initial, date, onDismiss={editTimeFor=null}) { value,mode,startDate -> saveTimeOverride(prefs,type,date,value,mode,startDate); editTimeFor=null } }
-}
-
-@Composable
-fun ColoredCard(color: Color, content: @Composable ColumnScope.() -> Unit) {
-    Card(Modifier.fillMaxWidth().border(0.dp, Color.Transparent, RoundedCornerShape(16.dp))) {
-        Row(Modifier.fillMaxWidth()) {
-            Box(Modifier.width(5.dp).fillMaxHeight().heightIn(min = 90.dp).background(color))
-            Column(Modifier.padding(16.dp).weight(1f), verticalArrangement = Arrangement.spacedBy(9.dp), content = content)
+        item { ReminderEditor(reminder) { reminder = it } }
+        item {
+            Button(
+                onClick = {
+                    onSave(WorkoutEntry(initial?.id ?: System.currentTimeMillis(), date, type, title.ifBlank { type }, time, duration.ifBlank { "Tempo non indicato" }, notes, initial?.done ?: false, reminder))
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = runCatching { LocalDate.parse(date); parseTime(time); true }.getOrDefault(false)
+            ) { Text("Salva allenamento") }
         }
     }
 }
 
 @Composable
-fun ActivityCard(style: CategoryStyle, title: String, body: String, onEdit: () -> Unit, onReminder: () -> Unit) {
-    ColoredCard(style.color) { Text("${style.emoji} $title", fontWeight = FontWeight.Bold); Text(body); Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button(onClick=onEdit){Text("✏️ Modifica")};OutlinedButton(onClick=onReminder){Text("🔔 Promemoria")}} }
-}
+fun RecurringRulesScreen(prefs: SharedPreferences, context: Context, onBack: () -> Unit) {
+    var rules by remember { mutableStateOf(loadRules(prefs)) }
+    var editing by remember { mutableStateOf<RecurringRule?>(null) }
+    var creating by remember { mutableStateOf(false) }
 
-@Composable
-fun TimedActivityCard(style: CategoryStyle, title: String, time: String, body: String, onTime: () -> Unit, onEdit: () -> Unit, onReminder: () -> Unit) {
-    ColoredCard(style.color) {
-        Row(verticalAlignment=Alignment.CenterVertically){ Text("${style.emoji} $title · ",fontWeight=FontWeight.Bold); TextButton(onClick=onTime,contentPadding=PaddingValues(0.dp)){Text(time,fontWeight=FontWeight.Bold)} }
-        Text(body)
-        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button(onClick=onEdit){Text("✏️ Modifica")};OutlinedButton(onClick=onReminder){Text("🔔 Promemoria")}}
+    if (creating || editing != null) {
+        RuleEditor(editing, onDismiss = { creating = false; editing = null }) { r ->
+            rules = if (editing == null) rules + r else rules.map { if (it.id == r.id) r else it }
+            saveRules(prefs, rules)
+            scheduleNextOccurrence(context, r)
+            creating = false; editing = null
+        }
+        return
     }
-}
 
-@Composable
-fun MealEditableCard(style: CategoryStyle, title: String, time: String, body: String, nutrition: NutritionEstimate, checked: Boolean, onChecked: (Boolean) -> Unit, onEdit: () -> Unit, onReminder: () -> Unit, onTime: () -> Unit) {
-    ColoredCard(style.color) {
-        Row(verticalAlignment=Alignment.CenterVertically){ Text("${style.emoji} $title · ",fontWeight=FontWeight.Bold); TextButton(onClick=onTime,contentPadding=PaddingValues(0.dp)){Text(time,fontWeight=FontWeight.Bold)} }
-        Text(body); Text("≈ ${nutrition.kcal} kcal · P ${nutrition.protein}g · C ${nutrition.carbs}g · G ${nutrition.fat}g", style=MaterialTheme.typography.bodySmall)
-        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button(onClick=onEdit){Text("✏️ Modifica")};OutlinedButton(onClick=onReminder){Text("🔔 Promemoria")}}
-        Row(verticalAlignment=Alignment.CenterVertically){Checkbox(checked=checked,onCheckedChange=onChecked);Text(if(checked)"Fatto" else "Segna come fatto")}
-    }
-}
-
-@Composable
-fun TimeEditDialog(type:String, initial:String, date:LocalDate, onDismiss:()->Unit, onSave:(String,String,LocalDate?)->Unit){
-    var time by remember{mutableStateOf(initial)}; var mode by remember{mutableStateOf("today")}; var start by remember{mutableStateOf(date.toString())}
-    AlertDialog(onDismissRequest=onDismiss,title={Text("🕒 Modifica orario")},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
-        OutlinedTextField(time,{time=it},label={Text("Orario HH:mm")},singleLine=true)
-        Text("Applica a:",fontWeight=FontWeight.Bold)
-        listOf("today" to "📅 Solo oggi","future" to "🔁 Da oggi in poi","date" to "🗓️ Dal giorno...").forEach{(v,l)->Row(verticalAlignment=Alignment.CenterVertically){RadioButton(selected=mode==v,onClick={mode=v});Text(l)}}
-        if(mode=="date")OutlinedTextField(start,{start=it},label={Text("Data YYYY-MM-DD")})
-    }},confirmButton={Button(onClick={if(runCatching{LocalTime.parse(time)}.isSuccess)onSave(time,mode,if(mode=="date")runCatching{LocalDate.parse(start)}.getOrNull()else null)}){Text("Salva")}},dismissButton={OutlinedButton(onClick=onDismiss){Text("Annulla")}})
-}
-
-@Composable
-fun MealEditDialog(title: String, initial: String, date: LocalDate, onDismiss: () -> Unit, onSave: (String, String, LocalDate?) -> Unit, onRestore: () -> Unit) {
-    var text by remember { mutableStateOf(initial) }
-    var mode by remember { mutableStateOf("today") }
-    var startText by remember { mutableStateOf(date.toString()) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("✏️ Modifica $title") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Scrivi liberamente gli alimenti. Per il calcolo usa, quando possibile, nome + grammi (es. pollo 180 g).")
-                OutlinedTextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth(), minLines = 3)
-                Text("Applica modifica a:", fontWeight = FontWeight.Bold)
-                listOf("today" to "📅 Solo oggi", "future" to "🔁 Da oggi in poi", "date" to "🗓️ Dal giorno...").forEach { (value, label) ->
-                    Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(selected = mode == value, onClick = { mode = value }); Text(label) }
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { ScreenTitle("🔁 Programmazioni ricorrenti", "Aggiungi, modifica o sospendi le tue programmazioni") { TextButton(onClick = onBack) { Text("‹ Indietro") } } }
+        items(rules) { r ->
+            AppCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("${categoryEmoji(r.category)} ${r.title}", fontWeight = FontWeight.Bold)
+                        Text("${weekdayLabel(r.weekdays)} · ${r.time}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (r.reminder.enabled) "🔔 ${reminderLabel(r.reminder)}" else "🔕 Promemoria disattivato", color = if (r.reminder.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    }
+                    IconButton(onClick = { editing = r }) { Text("✏️") }
                 }
-                if (mode == "date") OutlinedTextField(value = startText, onValueChange = { startText = it }, label = { Text("Data YYYY-MM-DD") })
-                TextButton(onClick = onRestore) { Text("↩️ Ripristina piano originale") }
             }
-        },
-        confirmButton = { Button(onClick = { onSave(text, mode, if (mode == "date") runCatching { LocalDate.parse(startText) }.getOrNull() else null) }) { Text("Salva") } },
-        dismissButton = { OutlinedButton(onClick = onDismiss) { Text("Annulla") } }
+        }
+        item { Button(onClick = { creating = true }, modifier = Modifier.fillMaxWidth()) { Text("＋ Nuova programmazione ricorrente") } }
+    }
+}
+
+@Composable
+fun RuleEditor(initial: RecurringRule?, onDismiss: () -> Unit, onSave: (RecurringRule) -> Unit) {
+    var category by remember { mutableStateOf(initial?.category ?: "Allenamento") }
+    var title by remember { mutableStateOf(initial?.title ?: "Palestra") }
+    var weekdays by remember { mutableStateOf(initial?.weekdays ?: setOf(DayOfWeek.TUESDAY.value)) }
+    var time by remember { mutableStateOf(initial?.time ?: "17:00") }
+    var start by remember { mutableStateOf(initial?.startDate ?: LocalDate.now().toString()) }
+    var end by remember { mutableStateOf(initial?.endDate ?: LocalDate.now().plusMonths(6).toString()) }
+    var reminder by remember { mutableStateOf(initial?.reminder ?: ReminderSettings()) }
+
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { ScreenTitle(if (initial == null) "＋ Nuova programmazione" else "✏️ Modifica programmazione") { TextButton(onClick = onDismiss) { Text("Annulla") } } }
+        item {
+            AppCard {
+                Text("Tipo", fontWeight = FontWeight.Bold)
+                SimplePicker(category, listOf("Allenamento", "Camminata", "Giornata libera", "Appuntamento", "Attività personale", "Idratazione", "Sonno", "Altro")) { category = it }
+                OutlinedTextField(title, { title = it }, label = { Text("Titolo") }, modifier = Modifier.fillMaxWidth())
+                Text("Giorni della settimana", fontWeight = FontWeight.Bold)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    listOf("L","M","M","G","V","S","D").forEachIndexed { i, label ->
+                        val day = i + 1
+                        FilterChip(selected = day in weekdays, onClick = { weekdays = if (day in weekdays) weekdays - day else weekdays + day }, label = { Text(label) })
+                    }
+                }
+                OutlinedTextField(time, { time = it }, label = { Text("Ora HH:MM") }, modifier = Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(start, { start = it }, label = { Text("Dal") }, modifier = Modifier.weight(1f))
+                    OutlinedTextField(end, { end = it }, label = { Text("Al") }, modifier = Modifier.weight(1f))
+                }
+            }
+        }
+        item { ReminderEditor(reminder) { reminder = it } }
+        item { Button(onClick = { onSave(RecurringRule(initial?.id ?: System.currentTimeMillis(), title, category, weekdays, time, start, end, reminder)) }, enabled = weekdays.isNotEmpty(), modifier = Modifier.fillMaxWidth()) { Text("Salva programmazione") } }
+    }
+}
+
+@Composable
+fun ReminderEditor(settings: ReminderSettings, onChange: (ReminderSettings) -> Unit) {
+    AppCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(checked = settings.enabled, onCheckedChange = { onChange(settings.copy(enabled = it)) })
+            Spacer(Modifier.width(8.dp))
+            Column { Text("🔔 Promemoria e notifica", fontWeight = FontWeight.Bold); Text("Attivabile o disattivabile per questo elemento", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }
+        }
+        if (settings.enabled) {
+            Text("Avvisami prima (opzionale)", fontWeight = FontWeight.Bold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NumberPickerField("Giorni", settings.daysBefore, 0..30) { onChange(settings.copy(daysBefore = it)) }
+                NumberPickerField("Ore", settings.hoursBefore, 0..23) { onChange(settings.copy(hoursBefore = it)) }
+                NumberPickerField("Minuti", settings.minutesBefore, 0..59) { onChange(settings.copy(minutesBefore = it)) }
+            }
+            Text("Esempio: ${settings.daysBefore} giorni · ${settings.hoursBefore} ore · ${settings.minutesBefore} minuti prima", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable
+fun RowScope.NumberPickerField(label: String, value: Int, range: IntRange, onChange: (Int) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(Modifier.weight(1f)) {
+        Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Box {
+            OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text(value.toString()) }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                range.forEach { n -> DropdownMenuItem(text = { Text(n.toString()) }, onClick = { onChange(n); expanded = false }) }
+            }
+        }
+    }
+}
+
+@Composable
+fun SimplePicker(value: String, options: List<String>, onChange: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text(value, modifier = Modifier.weight(1f)); Text("▼") }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { o -> DropdownMenuItem(text = { Text(o) }, onClick = { onChange(o); expanded = false }) }
+        }
+    }
+}
+
+@Composable
+fun PlanScreen(plan: List<PlanDay>, prefs: SharedPreferences) {
+    var week by rememberSaveable { mutableIntStateOf(1) }
+    var day by rememberSaveable { mutableIntStateOf(0) }
+    val names = listOf("Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica")
+    val start = plan.firstOrNull()?.date?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: LocalDate.now()
+    val date = start.plusDays(((week - 1) * 7 + day).toLong())
+    val p = plan.firstOrNull { it.date == date.toString() }
+    val meals = listOf(
+        Triple("🍳 Colazione", "07:00", p?.breakfast ?: "Yogurt greco, avena e frutta"),
+        Triple("🥤 Spuntino mattutino", "10:30", p?.snack ?: "Shake proteico"),
+        Triple("🍽️ Pranzo", "14:00", p?.lunch ?: "Pollo, verdure e couscous"),
+        Triple("🍎 Spuntino pomeridiano", "16:30", "Frutta e mandorle"),
+        Triple("🍲 Cena", "20:00", "Pesce e verdure")
+    )
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { ScreenTitle("🍽️ Piano alimentare", "Scegli prima la settimana e poi il giorno") }
+        item {
+            AppCard {
+                Text("1 · Seleziona la settimana", fontWeight = FontWeight.Bold)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    (1..4).forEach { w -> FilterChip(selected = week == w, onClick = { week = w }, label = { Text("Set. $w") }, modifier = Modifier.weight(1f)) }
+                }
+            }
+        }
+        item {
+            AppCard {
+                Text("2 · Seleziona il giorno", fontWeight = FontWeight.Bold)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    listOf("Lun","Mar","Mer","Gio","Ven","Sab","Dom").forEachIndexed { i, d -> FilterChip(selected = day == i, onClick = { day = i }, label = { Text(d) }) }
+                }
+            }
+        }
+        item { Text("Settimana $week · ${names[day]}", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp) }
+        items(meals) { m -> AppCard { Row { Column(Modifier.weight(1f)) { Text(m.first, fontWeight = FontWeight.Bold); Text("${m.second} · ${m.third}", color = MaterialTheme.colorScheme.onSurfaceVariant); Text("🔔 Promemoria attivo", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp) }; Text("✏️", modifier = Modifier.padding(8.dp).clickable { }) } } }
+        item { AppCard { Text("Riepilogo giornata", fontWeight = FontWeight.Bold); Text("5 pasti · 2 L acqua · 5 promemoria", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+    }
+}
+
+@Composable
+fun CalendarScreen(prefs: SharedPreferences, context: Context) {
+    var month by rememberSaveable { mutableStateOf(YearMonth.now()) }
+    var events by remember { mutableStateOf(loadEvents(prefs)) }
+    var selectedDate by remember { mutableStateOf<LocalDate?>(null) }
+    var addDate by remember { mutableStateOf<LocalDate?>(null) }
+
+    if (addDate != null) {
+        CalendarEventEditor(addDate!!, onDismiss = { addDate = null }) { ev ->
+            events = events + ev; saveEvents(prefs, events)
+            scheduleIfNeeded(context, ev.title, LocalDate.parse(ev.date), parseTime(ev.time), ev.reminder, ev.id.toInt())
+            addDate = null
+        }
+        return
+    }
+
+    val first = month.atDay(1)
+    val offset = first.dayOfWeek.value - 1
+    val total = month.lengthOfMonth()
+    val cells = List(offset) { null } + (1..total).map { month.atDay(it) }
+
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            ScreenTitle("📅 Calendario", "Tocca ＋ nel riquadro del giorno per aggiungere qualcosa")
+        }
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                IconButton(onClick = { month = month.minusMonths(1) }) { Text("‹", fontSize = 30.sp) }
+                Text("${month.month.getDisplayName(TextStyle.FULL, Locale.ITALIAN).replaceFirstChar { it.uppercase() }} ${month.year}", fontWeight = FontWeight.ExtraBold)
+                IconButton(onClick = { month = month.plusMonths(1) }) { Text("›", fontSize = 30.sp) }
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(Modifier.fillMaxWidth()) { listOf("L","M","M","G","V","S","D").forEach { Text(it, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold) } }
+                cells.chunked(7).forEach { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        row.forEach { d ->
+                            if (d == null) Spacer(Modifier.weight(1f).aspectRatio(1f)) else CalendarDayCell(d, events.filter { it.date == d.toString() }, Modifier.weight(1f), onAdd = { addDate = d }, onSelect = { selectedDate = d })
+                        }
+                        repeat(7 - row.size) { Spacer(Modifier.weight(1f).aspectRatio(1f)) }
+                    }
+                }
+            }
+        }
+        selectedDate?.let { d ->
+            item {
+                AppCard {
+                    Text(formatDateFull(d), fontWeight = FontWeight.ExtraBold)
+                    val list = events.filter { it.date == d.toString() }
+                    if (list.isEmpty()) Text("Nessun impegno programmato", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    else list.forEach { ev ->
+                        Text("${categoryEmoji(ev.category)} ${ev.time} · ${ev.title}", fontWeight = FontWeight.Bold)
+                        Text(if (ev.reminder.enabled) "🔔 ${reminderLabel(ev.reminder)}" else "🔕 Promemoria disattivato", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                    }
+                    Button(onClick = { addDate = d }, modifier = Modifier.fillMaxWidth()) { Text("＋ Aggiungi a questo giorno") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CalendarDayCell(date: LocalDate, events: List<CalendarEvent>, modifier: Modifier, onAdd: () -> Unit, onSelect: () -> Unit) {
+    Surface(
+        modifier = modifier.aspectRatio(.92f).clickable { onSelect() },
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (date == LocalDate.now()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(Modifier.padding(5.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(date.dayOfMonth.toString(), fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                Surface(modifier = Modifier.size(26.dp).clickable { onAdd() }, shape = RoundedCornerShape(7.dp), color = MaterialTheme.colorScheme.surfaceVariant) { Box(contentAlignment = Alignment.Center) { Text("＋", fontSize = 16.sp) } }
+            }
+            events.take(2).forEach { Text("${categoryEmoji(it.category)} ${it.title}", fontSize = 9.sp, maxLines = 1) }
+            if (events.size > 2) Text("+${events.size - 2} altri", color = MaterialTheme.colorScheme.primary, fontSize = 9.sp)
+        }
+    }
+}
+
+@Composable
+fun CalendarEventEditor(date: LocalDate, onDismiss: () -> Unit, onSave: (CalendarEvent) -> Unit) {
+    var category by remember { mutableStateOf("Impegno / Appuntamento") }
+    var title by remember { mutableStateOf("") }
+    var time by remember { mutableStateOf("10:00") }
+    var duration by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf("") }
+    var reminder by remember { mutableStateOf(ReminderSettings()) }
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { ScreenTitle("＋ Aggiungi impegno", formatDateFull(date)) { TextButton(onClick = onDismiss) { Text("Annulla") } } }
+        item {
+            AppCard {
+                SimplePicker(category, listOf("Impegno / Appuntamento", "Allenamento", "Attività personale", "Spesa", "Idratazione", "Sonno", "Giornata libera", "Altro")) { category = it }
+                OutlinedTextField(title, { title = it }, label = { Text("Titolo") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(time, { time = it }, label = { Text("Ora HH:MM") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(duration, { duration = it }, label = { Text("Durata / tempo (opzionale)") }, placeholder = { Text("Es. 45 min") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(notes, { notes = it }, label = { Text("Note") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+            }
+        }
+        item { ReminderEditor(reminder) { reminder = it } }
+        item { Button(onClick = { onSave(CalendarEvent(System.currentTimeMillis(), date.toString(), category, title.ifBlank { category }, time, duration, notes, reminder)) }, modifier = Modifier.fillMaxWidth()) { Text("Salva nel calendario") } }
+    }
+}
+
+@Composable
+fun SecondaryScreen(screen: String, prefs: SharedPreferences, theme: String, onTheme: (String) -> Unit, onBack: () -> Unit) {
+    var target by rememberSaveable(screen) { mutableStateOf(if (screen == "menu") "menu" else screen) }
+    if (target != "menu") {
+        when (target) {
+            "shopping" -> ShoppingScreen(onBack = { target = "menu" })
+            "journal" -> JournalScreen(onBack = { target = "menu" })
+            "goals" -> GoalsScreen(onBack = { target = "menu" })
+            "profile" -> ProfileScreen(prefs, onBack = { target = "menu" })
+            "settings" -> SettingsScreen(theme, onTheme, onBack = { target = "menu" })
+            else -> SimpleInfoScreen(target, onBack = { target = "menu" })
+        }
+        return
+    }
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item { ScreenTitle("☰ Menu") { TextButton(onClick = onBack) { Text("Chiudi") } } }
+        item { MenuSection("👤 Profilo") }
+        item { MenuButton("🧭 Il mio percorso") { target = "profile" } }
+        item { MenuSection("🔒 Il mio spazio") }
+        item { MenuButton("🎯 Obiettivi e trofei") { target = "goals" } }
+        item { MenuButton("🌟 Vita personale") { target = "personal" } }
+        item { MenuButton("📝 Diario giornaliero") { target = "journal" } }
+        item { MenuButton("😴 Sonno") { target = "sleep" } }
+        item { MenuButton("⚖️ Peso e misure") { target = "weight" } }
+        item { MenuButton("💧 Idratazione") { target = "water" } }
+        item { MenuSection("👨‍⚕️ I miei professionisti") }
+        item { MenuButton("🥗 Nutrizionista") { target = "nutritionist" } }
+        item { MenuButton("💪 Personal Trainer") { target = "pt" } }
+        item { MenuSection("⚙️ Organizzazione e app") }
+        item { MenuButton("🛒 Lista della spesa") { target = "shopping" } }
+        item { MenuButton("📋 Agenda") { target = "agenda" } }
+        item { MenuButton("🧩 Widget") { target = "widgets" } }
+        item { MenuButton("⚙️ Impostazioni") { target = "settings" } }
+    }
+}
+
+@Composable fun MenuSection(text: String) { Text(text, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, modifier = Modifier.padding(top = 8.dp)) }
+@Composable fun MenuButton(text: String, onClick: () -> Unit) { Surface(modifier = Modifier.fillMaxWidth().clickable { onClick() }, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(12.dp)) { Text(text, Modifier.padding(16.dp), fontWeight = FontWeight.Bold) } }
+
+@Composable
+fun ShoppingScreen(onBack: () -> Unit) {
+    val initial = remember { mutableStateListOf("🍎 Mele" to false, "🍐 Pere" to false, "🍝 Pasta proteica" to false, "🧂 Sale" to false) }
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item { ScreenTitle("🛒 Spesa", "${initial.count { it.second }} di ${initial.size} acquistati") { TextButton(onClick = onBack) { Text("‹ Indietro") } } }
+        items(initial.size) { i -> val p = initial[i]; AppCard { Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(p.first, fontWeight = FontWeight.Bold); Text("− 1 + · pezzi", color = MaterialTheme.colorScheme.onSurfaceVariant); Text("📝 Nota", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp) }; CircleCheck(p.second) { initial[i] = p.first to !p.second } } } }
+        item { Button(onClick = {}, modifier = Modifier.fillMaxWidth()) { Text("＋ Aggiungi prodotto") } }
+    }
+}
+
+@Composable
+fun JournalScreen(onBack: () -> Unit) {
+    var note by remember { mutableStateOf("") }
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { ScreenTitle("📝 Resoconto della giornata") { TextButton(onClick = onBack) { Text("‹ Indietro") } } }
+        item { AppCard { Text("😊 Come è andata?", fontWeight = FontWeight.Bold); Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) { listOf("Molto bene","Bene","Così così","Male").forEach { AssistChip(onClick = {}, label = { Text(it, fontSize = 11.sp) }) } } } }
+        item { AppCard { Text("📓 Note libere", fontWeight = FontWeight.Bold); OutlinedTextField(note, { note = it }, modifier = Modifier.fillMaxWidth(), minLines = 5, placeholder = { Text("Scrivi come è andata la giornata...") }) } }
+        item { Button(onClick = {}, modifier = Modifier.fillMaxWidth()) { Text("💾 Salva resoconto") } }
+    }
+}
+
+@Composable
+fun GoalsScreen(onBack: () -> Unit) { LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { item { ScreenTitle("🎯 Obiettivi e trofei") { TextButton(onClick = onBack) { Text("‹ Indietro") } } }; item { AppCard { Text("🏋️ Costanza allenamenti", fontWeight = FontWeight.Bold); Text("18 / 25", color = MaterialTheme.colorScheme.onSurfaceVariant); LinearProgressIndicator(progress = { .72f }, modifier = Modifier.fillMaxWidth()); Text("🌴 Le pause programmate non interrompono la serie", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp) } }; item { AppCard { Text("🏆 Trofei", fontWeight = FontWeight.Bold); Text("🥉 5 impegni · 🥈 10 allenamenti · 💧 7 giorni acqua") } } } }
+
+@Composable
+fun ProfileScreen(prefs: SharedPreferences, onBack: () -> Unit) { var name by remember { mutableStateOf(prefs.getString("profile_name", "Alessandro") ?: "Alessandro") }; LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { item { ScreenTitle("🧭 Il mio percorso") { TextButton(onClick = onBack) { Text("‹ Indietro") } } }; item { AppCard { OutlinedTextField(name, { name = it }, label = { Text("Nome") }, modifier = Modifier.fillMaxWidth()); Button(onClick = { prefs.edit().putString("profile_name", name).apply() }, modifier = Modifier.fillMaxWidth()) { Text("Salva profilo") } } }; item { AppCard { Text("🎯 Obiettivi", fontWeight = FontWeight.Bold); Text("Dimagrire · Aumentare massa · Bere di più", color = MaterialTheme.colorScheme.onSurfaceVariant) } }; item { AppCard { Text("🏠 Personalizza Home", fontWeight = FontWeight.Bold); Text("Alimentazione · Allenamenti · Acqua · Sonno · Vita personale", color = MaterialTheme.colorScheme.onSurfaceVariant) } } } }
+
+@Composable
+fun SettingsScreen(theme: String, onTheme: (String) -> Unit, onBack: () -> Unit) { LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { item { ScreenTitle("⚙️ Impostazioni") { TextButton(onClick = onBack) { Text("‹ Indietro") } } }; item { AppCard { Text("Aspetto", fontWeight = FontWeight.Bold); listOf("dark" to "🌙 Scuro", "light" to "☀️ Chiaro", "system" to "📱 Automatico").forEach { p -> Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(selected = theme == p.first, onClick = { onTheme(p.first) }); Text(p.second) } } } } } }
+
+@Composable
+fun SimpleInfoScreen(name: String, onBack: () -> Unit) {
+    val title = when (name) {
+        "personal" -> "🌟 Vita personale"
+        "sleep" -> "😴 Sonno"
+        "weight" -> "⚖️ Peso e misure"
+        "water" -> "💧 Idratazione"
+        "nutritionist" -> "🥗 Nutrizionista"
+        "pt" -> "💪 Personal Trainer"
+        "agenda" -> "📋 Agenda"
+        "widgets" -> "🧩 Widget"
+        else -> name.replaceFirstChar { it.uppercase() }
+    }
+    val description = when (name) {
+        "personal" -> "Organizza impegni, abitudini e attività personali."
+        "sleep" -> "Registra orario di sonno, risveglio, durata e qualità."
+        "weight" -> "Registra peso e misure e segui i progressi nel tempo."
+        "water" -> "Gestisci il tuo obiettivo acqua e i promemoria personalizzati."
+        "nutritionist" -> "Collega il nutrizionista e gestisci piano e permessi."
+        "pt" -> "Collega il Personal Trainer e gestisci schede e permessi."
+        "agenda" -> "Consulta in ordine cronologico tutti i prossimi impegni."
+        "widgets" -> "Configura i widget della giornata e le sezioni da mostrare."
+        else -> "Gestisci questa sezione della tua giornata."
+    }
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { ScreenTitle(title) { TextButton(onClick = onBack) { Text("‹ Indietro") } } }
+        item { AppCard { Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant); Text("🔔 Ogni elemento programmabile può avere una notifica attivabile/disattivabile con preavviso personalizzato in giorni, ore e minuti.", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp) } }
+        item { Button(onClick = {}, modifier = Modifier.fillMaxWidth()) { Text("＋ Aggiungi") } }
+    }
+}
+
+fun loadWorkouts(prefs: SharedPreferences): List<WorkoutEntry> {
+    return runCatching {
+        val arr = JSONArray(prefs.getString("workouts", "[]"))
+        buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                add(WorkoutEntry(o.getLong("id"), o.getString("date"), o.getString("type"), o.getString("title"), o.getString("time"), o.optString("duration"), o.optString("notes"), o.optBoolean("done"), reminderFromJson(o.optJSONObject("reminder"))))
+            }
+        }
+    }.getOrDefault(emptyList())
+}
+
+fun saveWorkouts(prefs: SharedPreferences, list: List<WorkoutEntry>) {
+    val arr = JSONArray(); list.forEach { w -> arr.put(JSONObject().put("id", w.id).put("date", w.date).put("type", w.type).put("title", w.title).put("time", w.time).put("duration", w.durationText).put("notes", w.notes).put("done", w.done).put("reminder", reminderToJson(w.reminder))) }; prefs.edit().putString("workouts", arr.toString()).apply()
+}
+
+fun loadRules(prefs: SharedPreferences): List<RecurringRule> {
+    val loaded = runCatching {
+        val arr = JSONArray(prefs.getString("rules", "[]")); buildList {
+            for (i in 0 until arr.length()) { val o = arr.getJSONObject(i); val ds = mutableSetOf<Int>(); val a = o.getJSONArray("weekdays"); for (j in 0 until a.length()) ds += a.getInt(j); add(RecurringRule(o.getLong("id"), o.getString("title"), o.getString("category"), ds, o.getString("time"), o.getString("start"), o.getString("end"), reminderFromJson(o.optJSONObject("reminder")))) }
+        }
+    }.getOrDefault(emptyList())
+    if (loaded.isNotEmpty()) return loaded
+    return listOf(
+        RecurringRule(1, "Palestra", "Allenamento", setOf(2,4), "17:00", LocalDate.now().toString(), LocalDate.now().plusMonths(10).toString(), ReminderSettings()),
+        RecurringRule(2, "Domenica libera", "Giornata libera", setOf(7), "09:00", LocalDate.now().toString(), LocalDate.now().plusYears(1).toString(), ReminderSettings(enabled = false))
     )
 }
 
-@Composable
-fun ActivityEditDialog(initialName: String, initialTime: String, initialDuration: Int, onDismiss: () -> Unit, onSave: (String, String, Int) -> Unit) {
-    val options = listOf("🚶 Camminata", "🏋️ Palestra", "🏠 Allenamento a casa", "😴 Riposo", "✏️ Personalizzata")
-    var selected by remember { mutableStateOf(options.firstOrNull { initialName.contains(it.substringAfter(' '), true) } ?: "✏️ Personalizzata") }
-    var custom by remember { mutableStateOf(if (selected == "✏️ Personalizzata") initialName else "") }
-    var time by remember { mutableStateOf(initialTime) }
-    var duration by remember { mutableStateOf(initialDuration.toString()) }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Modifica attività") }, text = {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            options.forEach { op -> Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(selected == op, { selected = op }); Text(op) } }
-            if (selected == "✏️ Personalizzata") OutlinedTextField(custom, { custom = it }, label = { Text("Nome attività") })
-            OutlinedTextField(time, { time = it }, label = { Text("Ora (HH:mm)") })
-            OutlinedTextField(duration, { duration = it.filter(Char::isDigit) }, label = { Text("Durata minuti") })
-        }
-    }, confirmButton = {
-        Button(onClick = { val name = if (selected == "✏️ Personalizzata") custom.ifBlank { "Attività personalizzata" } else selected.substringAfter(' '); onSave(name, time.ifBlank { "18:00" }, duration.toIntOrNull()?.coerceIn(1,600) ?: 45) }) { Text("Salva") }
-    }, dismissButton = { OutlinedButton(onClick = onDismiss) { Text("Annulla") } })
-}
+fun saveRules(prefs: SharedPreferences, list: List<RecurringRule>) { val arr = JSONArray(); list.forEach { r -> val days = JSONArray(); r.weekdays.sorted().forEach { days.put(it) }; arr.put(JSONObject().put("id",r.id).put("title",r.title).put("category",r.category).put("weekdays",days).put("time",r.time).put("start",r.startDate).put("end",r.endDate).put("reminder",reminderToJson(r.reminder))) }; prefs.edit().putString("rules", arr.toString()).apply() }
 
-// ---------- CALENDARIO ----------
-@Composable
-fun CalendarScreen(plan: List<PlanDay>, prefs: SharedPreferences, context: Context) {
-    var selectedDate by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
-    var view by rememberSaveable { mutableStateOf("Mese") }
-    var cursor by rememberSaveable { mutableStateOf(YearMonth.now().toString()) }
-    var addEvent by remember { mutableStateOf(false) }
-    var editEvent by remember { mutableStateOf<String?>(null) }
-    var reminderEvent by remember { mutableStateOf<Pair<String,LocalTime>?>(null) }
-    val ym=YearMonth.parse(cursor); val selected=LocalDate.parse(selectedDate)
-    LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-        item{Text("Calendario",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold)}
-        item{SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){listOf("Giorno","Settimana","Mese","Anno").forEachIndexed{i,label->SegmentedButton(selected=view==label,onClick={view=label},shape=SegmentedButtonDefaults.itemShape(i,4)){Text(label,fontSize=11.sp)}}}}
-        when(view){
-            "Settimana"->item{WeekCalendarView(selected,prefs){selectedDate=it.toString();view="Giorno"}}
-            "Anno"->item{YearCalendarView(selected.year){m->cursor=YearMonth.of(selected.year,m).toString();view="Mese"}}
-            "Mese"->item{Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){OutlinedButton(onClick={cursor=ym.minusMonths(1).toString()}){Text("‹")};Text(ym.format(DateTimeFormatter.ofPattern("MMMM yyyy",Locale.ITALIAN)).replaceFirstChar{it.uppercase()},fontWeight=FontWeight.Bold);OutlinedButton(onClick={cursor=ym.plusMonths(1).toString()}){Text("›")}};MonthGrid(ym,selected,prefs){selectedDate=it.toString()}}}
-            else->{ }
-        }
-        item{OrderedDayCard(selected,plan,prefs,onAdd={addEvent=true},onEdit={editEvent=it},onReminder={event->reminderEvent=event to parseEventTime(event)})}
-    }
-    if(addEvent) EventDialog(selected,prefs,onDismiss={addEvent=false})
-    editEvent?.let{event-> EventEditDialog(selected,event,prefs,onDismiss={editEvent=null},onReminder={label,time->editEvent=null;reminderEvent=label to time}) }
-    reminderEvent?.let{(label,time)->ReminderDialog(label,selected,time,context){reminderEvent=null}}
-}
+fun loadEvents(prefs: SharedPreferences): List<CalendarEvent> = runCatching { val arr = JSONArray(prefs.getString("events","[]")); buildList { for (i in 0 until arr.length()) { val o=arr.getJSONObject(i); add(CalendarEvent(o.getLong("id"),o.getString("date"),o.getString("category"),o.getString("title"),o.getString("time"),o.optString("duration"),o.optString("notes"),reminderFromJson(o.optJSONObject("reminder")))) } } }.getOrDefault(emptyList())
+fun saveEvents(prefs: SharedPreferences, list: List<CalendarEvent>) { val arr=JSONArray(); list.forEach { e -> arr.put(JSONObject().put("id",e.id).put("date",e.date).put("category",e.category).put("title",e.title).put("time",e.time).put("duration",e.durationText).put("notes",e.notes).put("reminder",reminderToJson(e.reminder))) }; prefs.edit().putString("events",arr.toString()).apply() }
 
-@Composable
-fun OrderedDayCard(date:LocalDate,plan:List<PlanDay>,prefs:SharedPreferences,onAdd:()->Unit,onEdit:(String)->Unit,onReminder:(String)->Unit){
-    val day=plan.firstOrNull{it.date==date.toString()}
-    Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-        Text(formatDate(date.toString()),style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
-        Text("🍽️ ALIMENTAZIONE",style=MaterialTheme.typography.labelMedium,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
-        day?.let{
-            CalendarMealLine(BreakfastStyle, resolveTimeText(prefs,date,"breakfast","07:00"),"Colazione",resolveMealText(prefs,date.toString(),"breakfast",it.breakfast))
-            CalendarMealLine(SnackStyle, resolveTimeText(prefs,date,"snack","10:30"),"Spuntino",resolveMealText(prefs,date.toString(),"snack",it.snack))
-            CalendarMealLine(LunchStyle, resolveTimeText(prefs,date,"lunch","14:00"),"Pranzo",resolveMealText(prefs,date.toString(),"lunch",it.lunch))
-        } ?: Text("Nessun piano alimentare per questa data",style=MaterialTheme.typography.bodySmall)
-        HorizontalDivider()
-        Text("📅 IMPEGNI",style=MaterialTheme.typography.labelMedium,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
-        val events=getEventsForDate(prefs,date)
-        if(events.isEmpty())Text("Nessun impegno",style=MaterialTheme.typography.bodySmall)
-        events.forEach{event->
-            val style=activityStyleFor(event)
-            Surface(modifier=Modifier.fillMaxWidth().clickable{onEdit(event)},shape=RoundedCornerShape(12.dp),color=style.color.copy(alpha=.10f)){
-                Row(Modifier.padding(12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){Text(event,modifier=Modifier.weight(1f));Text("✏️",fontSize=18.sp)}
-            }
-        }
-        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button(onClick=onAdd){Text("+ Aggiungi")}; if(events.isNotEmpty())OutlinedButton(onClick={onReminder(events.first())}){Text("🔔 Promemoria")}}
-    }}
-}
-
-@Composable fun CalendarMealLine(style:CategoryStyle,time:String,title:String,body:String){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.Top){Box(Modifier.width(4.dp).height(52.dp).background(style.color,RoundedCornerShape(4.dp)));Spacer(Modifier.width(8.dp));Column{Text("${style.emoji} $time · $title",fontWeight=FontWeight.SemiBold);Text(body,style=MaterialTheme.typography.bodySmall)}}}
-
-@Composable
-fun MonthGrid(month:YearMonth,selected:LocalDate,prefs:SharedPreferences,onSelect:(LocalDate)->Unit){
-    val first=month.atDay(1);val offset=first.dayOfWeek.value-1
-    Column{Row(Modifier.fillMaxWidth()){listOf("L","M","M","G","V","S","D").forEach{Text(it,Modifier.weight(1f),textAlign=TextAlign.Center,style=MaterialTheme.typography.bodySmall)}}
-        val cells=offset+month.lengthOfMonth();val rows=(cells+6)/7
-        repeat(rows){row->Row(Modifier.fillMaxWidth()){repeat(7){col->val dayNum=row*7+col-offset+1;if(dayNum !in 1..month.lengthOfMonth())Spacer(Modifier.weight(1f).aspectRatio(1f))else{val d=month.atDay(dayNum);val events=getEventsForDate(prefs,d);val icons=buildString{if(events.any{it.contains("Palestra",true)})append("🏋️");if(events.any{it.contains("Cammin",true)})append("🚶");if(events.any{it.contains("Lavor",true)})append("💼")};Column(Modifier.weight(1f).aspectRatio(1f).padding(2.dp).border(if(d==selected)2.dp else 0.dp,MaterialTheme.colorScheme.primary,RoundedCornerShape(10.dp)).clickable{onSelect(d)}.padding(3.dp),horizontalAlignment=Alignment.CenterHorizontally){Text(dayNum.toString(),fontSize=12.sp);Text(icons.take(4),fontSize=9.sp)}}}}}
-    }
-}
-
-@Composable fun WeekCalendarView(date:LocalDate,prefs:SharedPreferences,onSelect:(LocalDate)->Unit){val monday=date.minusDays((date.dayOfWeek.value-1).toLong());Column(verticalArrangement=Arrangement.spacedBy(6.dp)){repeat(7){i->val d=monday.plusDays(i.toLong());Card(Modifier.fillMaxWidth().clickable{onSelect(d)}){Row(Modifier.padding(12.dp),horizontalArrangement=Arrangement.SpaceBetween){Text(d.format(DateTimeFormatter.ofPattern("EEE d",Locale.ITALIAN)));Text(getEventsForDate(prefs,d).joinToString("  ").ifBlank{"—"})}}}}}
-@Composable fun YearCalendarView(year:Int,onMonth:(Int)->Unit){Column(verticalArrangement=Arrangement.spacedBy(8.dp)){(1..12).chunked(3).forEach{chunk->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){chunk.forEach{m->Card(Modifier.weight(1f).clickable{onMonth(m)}){Text(YearMonth.of(year,m).format(DateTimeFormatter.ofPattern("MMM",Locale.ITALIAN)).uppercase(),Modifier.padding(18.dp).fillMaxWidth(),textAlign=TextAlign.Center,fontWeight=FontWeight.Bold)}}}}}}
-
-@Composable
-fun EventDialog(date:LocalDate,prefs:SharedPreferences,onDismiss:()->Unit){
-    val types=listOf("🏋️ Palestra","🚶 Camminata","💼 Lavoro","📌 Impegno","🏠 Allenamento a casa","⭐ Altro");var type by remember{mutableStateOf(types[0])};var title by remember{mutableStateOf("")};var time by remember{mutableStateOf("18:00")}
-    AlertDialog(onDismissRequest=onDismiss,title={Text("Nuovo impegno")},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){types.forEach{t->Row(verticalAlignment=Alignment.CenterVertically){RadioButton(type==t,{type=t});Text(t)}};OutlinedTextField(title,{title=it},label={Text("Titolo / nota")});OutlinedTextField(time,{time=it},label={Text("Ora HH:mm")})}},confirmButton={Button(onClick={addEvent(prefs,date,"$type ${title.trim()} · ${time.ifBlank{"18:00"}}".trim());onDismiss()}){Text("Salva")}},dismissButton={OutlinedButton(onClick=onDismiss){Text("Annulla")}})
-}
-
-@Composable
-fun EventEditDialog(date:LocalDate,event:String,prefs:SharedPreferences,onDismiss:()->Unit,onReminder:(String,LocalTime)->Unit){
-    var text by remember{mutableStateOf(event.substringBeforeLast("·").trim())};var time by remember{mutableStateOf(parseEventTime(event).toString())}
-    AlertDialog(onDismissRequest=onDismiss,title={Text("✏️ Modifica impegno")},text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){OutlinedTextField(text,{text=it},label={Text("Impegno")});OutlinedTextField(time,{time=it},label={Text("Ora HH:mm")});OutlinedButton(onClick={onReminder(text,parseTime(time,LocalTime.of(9,0)))},modifier=Modifier.fillMaxWidth()){Text("🔔 Modifica / aggiungi promemoria")};OutlinedButton(onClick={removeEvent(prefs,date,event);onDismiss()},modifier=Modifier.fillMaxWidth()){Text("🗑️ Elimina")}}},confirmButton={Button(onClick={replaceEvent(prefs,date,event,"${text.trim()} · ${time.ifBlank{"09:00"}}");onDismiss()}){Text("Salva")}},dismissButton={TextButton(onClick=onDismiss){Text("Chiudi")}})
-}
-
-// ---------- PROGRESSI ----------
-data class TrophyInfo(val icon:String,val name:String,val description:String,val current:Int,val target:Int,val category:String,val unlocked:Boolean)
-
-@Composable
-fun ProgressScreen(plan:List<PlanDay>,prefs:SharedPreferences){
-    var weightText by remember{mutableStateOf("")};var weights by remember{mutableStateOf(loadWeights(prefs))};var initialWeight by remember{mutableStateOf(prefs.getFloat("initial_weight",0f).toString().takeIf{prefs.contains("initial_weight")}?:"")}
-    val current=weights.firstOrNull()?.second;val start=prefs.getFloat("initial_weight",current?.toFloat()?:0f).toDouble();val change=if(current!=null&&start>0)current-start else null;val stats=calculateDiscipline(plan,prefs)
-    var showAll by remember{mutableStateOf(false)};var selectedTrophy by remember{mutableStateOf<TrophyInfo?>(null)}
-    val lost=((start-(current?:start)).coerceAtLeast(0.0)*10).roundToInt()
-    val trophies=listOf(
-        TrophyInfo("🏆","Costanza","7 giorni consecutivi con piano completato",stats["foodDays"]?:0,7,"Abitudini",(stats["foodDays"]?:0)>=7),
-        TrophyInfo("💧","Idratazione Pro","7 giorni con obiettivo idratazione",stats["waterDays"]?:0,7,"Abitudini",(stats["waterDays"]?:0)>=7),
-        TrophyInfo("🏋️","Allenatore","10 allenamenti completati",stats["activityCount"]?:0,10,"Allenamenti",(stats["activityCount"]?:0)>=10),
-        TrophyInfo("🔥","Disciplina d'Oro","30 giornate di disciplina",stats["foodDays"]?:0,30,"Abitudini",(stats["foodDays"]?:0)>=30),
-        TrophyInfo("⚖️","Perseveranza","5 kg persi",lost,50,"Peso",lost>=50),
-        TrophyInfo("🚶","Maratoneta","50 attività/camminate",stats["activityCount"]?:0,50,"Allenamenti",(stats["activityCount"]?:0)>=50),
-        TrophyInfo("🧠","Mente Forte","20 giornate alimentari complete",stats["foodDays"]?:0,20,"Alimentazione",(stats["foodDays"]?:0)>=20),
-        TrophyInfo("🥗","Nutrizione Top","14 giorni alimentazione perfetta",stats["foodDays"]?:0,14,"Alimentazione",(stats["foodDays"]?:0)>=14),
-        TrophyInfo("⭐","Equilibrio","7 giorni alimentazione + idratazione",minOf(stats["foodDays"]?:0,stats["waterDays"]?:0),7,"Abitudini",minOf(stats["foodDays"]?:0,stats["waterDays"]?:0)>=7)
-    )
-    LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-        item{Text("Progressi",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold);Text("“La disciplina di oggi è il successo di domani.”",color=Color(0xFF2E7D32))}
-        item{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){MetricCard("Peso perso",if(change!=null)"${"%.1f".format((-change).coerceAtLeast(0.0))} kg" else "—",Modifier.weight(1f));MetricCard("Idratazione","${prefs.getInt("water_target_ml",2500)/1000.0} L",Modifier.weight(1f));MetricCard("Allenamenti","${stats["activityCount"]?:0}",Modifier.weight(1f))}}
-        item{Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("Disciplina",fontWeight=FontWeight.Bold);Text("${stats["general"]?:0}%")};DisciplineRow("🥗 Alimentazione",stats["food"]?:0);DisciplineRow("💧 Idratazione",stats["water"]?:0);DisciplineRow("🏋️ Allenamenti",stats["activity"]?:0)}}}
-        item{Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Text("⚖️ Registra peso",fontWeight=FontWeight.Bold);OutlinedTextField(initialWeight,{initialWeight=it.replace(',','.')},label={Text("Peso iniziale")},singleLine=true);OutlinedTextField(weightText,{weightText=it.replace(',','.')},label={Text("Peso di oggi")},singleLine=true);Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button(onClick={initialWeight.toFloatOrNull()?.takeIf{it in 30f..300f}?.let{prefs.edit().putFloat("initial_weight",it).apply()}}){Text("Salva iniziale")};Button(onClick={weightText.toDoubleOrNull()?.takeIf{it in 30.0..300.0}?.let{saveWeight(prefs,LocalDate.now(),it);weights=loadWeights(prefs);weightText=""}}){Text("Salva oggi")}}}}}
-        item{Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Text("🎯 Obiettivi",fontWeight=FontWeight.Bold);GoalRow("⚖️","Perdi 5 kg",(lost*100/50).coerceIn(0,100));GoalRow("💧","7 giorni idratazione",((stats["waterDays"]?:0)*100/7).coerceIn(0,100));GoalRow("🏋️","10 allenamenti",((stats["activityCount"]?:0)*100/10).coerceIn(0,100));GoalRow("🥗","14 giorni alimentazione",((stats["foodDays"]?:0)*100/14).coerceIn(0,100))}}}
-        item{Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("🏆 Trofei",fontWeight=FontWeight.Bold);Text("${trophies.count{it.unlocked}} / ${trophies.size} sbloccati",style=MaterialTheme.typography.bodySmall)};Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){trophies.take(3).forEach{t->TrophyCard(t,Modifier.weight(1f)){selectedTrophy=t}}};Button(onClick={showAll=true},modifier=Modifier.fillMaxWidth()){Text("Vedi tutti i trofei")}}}}
-        item{Text("Storico peso",fontWeight=FontWeight.Bold)};items(weights.take(30)){(d,kg)->Card{Text("${formatDate(d)} · ${"%.1f".format(kg)} kg",Modifier.padding(12.dp))}}
-    }
-    if(showAll) TrophyGalleryDialog(trophies,onDismiss={showAll=false},onSelect={selectedTrophy=it})
-    selectedTrophy?.let{TrophyDetailDialog(it){selectedTrophy=null}}
-}
-
-@Composable fun MetricCard(label:String,value:String,modifier:Modifier=Modifier,sub:String?=null){Card(modifier){Column(Modifier.padding(12.dp)){Text(label,style=MaterialTheme.typography.bodySmall);Text(value,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);sub?.let{Text(it)}}}}
-@Composable fun DisciplineRow(label:String,value:Int){Column{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(label);Text("$value%",fontWeight=FontWeight.Bold)};LinearProgressIndicator(progress={value/100f},modifier=Modifier.fillMaxWidth())}}
-@Composable fun GoalRow(icon:String,label:String,value:Int){Column{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("$icon $label");Text("$value%")};LinearProgressIndicator(progress={value/100f},modifier=Modifier.fillMaxWidth())}}
-@Composable fun TrophyCard(t:TrophyInfo,modifier:Modifier,onClick:()->Unit){Card(modifier.clickable{onClick()}){Column(Modifier.padding(10.dp).fillMaxWidth(),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(5.dp)){Text(if(t.unlocked)t.icon else "🔒",fontSize=30.sp);Text(t.name,fontWeight=FontWeight.Bold,textAlign=TextAlign.Center,fontSize=12.sp);Text("${t.current.coerceAtMost(t.target)} / ${t.target}",fontSize=11.sp);LinearProgressIndicator(progress={(t.current.toFloat()/t.target.coerceAtLeast(1)).coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth())}}}
-@Composable fun TrophyGalleryDialog(trophies:List<TrophyInfo>,onDismiss:()->Unit,onSelect:(TrophyInfo)->Unit){var filter by remember{mutableStateOf("Tutti")};val cats=listOf("Tutti","Alimentazione","Allenamenti","Abitudini","Peso");val shown=trophies.filter{filter=="Tutti"||it.category==filter};AlertDialog(onDismissRequest=onDismiss,title={Text("🏆 I miei trofei")},text={LazyColumn(verticalArrangement=Arrangement.spacedBy(10.dp)){item{SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){cats.take(3).forEachIndexed{i,c->SegmentedButton(selected=filter==c,onClick={filter=c},shape=SegmentedButtonDefaults.itemShape(i,3)){Text(c,fontSize=10.sp)}}}};items(shown.chunked(2)){row->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){row.forEach{t->TrophyCard(t,Modifier.weight(1f)){onSelect(t)}};if(row.size==1)Spacer(Modifier.weight(1f))}}}},confirmButton={},dismissButton={TextButton(onClick=onDismiss){Text("Chiudi")}})}
-@Composable fun TrophyDetailDialog(t:TrophyInfo,onDismiss:()->Unit){AlertDialog(onDismissRequest=onDismiss,title={Text(if(t.unlocked)"${t.icon} ${t.name}" else "🔒 ${t.name}")},text={Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)){Text(if(t.unlocked)t.icon else "🔒",fontSize=72.sp);Text(t.description,textAlign=TextAlign.Center);Text("Il tuo progresso ${t.current.coerceAtMost(t.target)} / ${t.target}",fontWeight=FontWeight.Bold);LinearProgressIndicator(progress={(t.current.toFloat()/t.target.coerceAtLeast(1)).coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth());Text(if(t.unlocked)"Sbloccato! Il divano non ha presentato ricorso. 😄" else "Continua così: manca meno di quanto sembri. 😏",style=MaterialTheme.typography.bodySmall,textAlign=TextAlign.Center)}},confirmButton={Button(onClick=onDismiss){Text("Chiudi")}})}
-
-// ---------- ALLENAMENTI ----------
-@Composable
-fun TrainingScreen(prefs:SharedPreferences,context:Context){
-    var reminder by remember{mutableStateOf<Pair<String,LocalTime>?>(null)};var editExercise by remember{mutableStateOf<String?>(null)}
-    val exercises=listOf("Collo e spalle" to 60,"Mobilità anche" to 60,"Marcia leggera" to 90,"Stretching dolce" to 120)
-    LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-        item{Text("Allenamenti",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold)}
-        item{ColoredCard(WakeStyle.color){Text("🌅 Risveglio muscolare",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Text("Massimo 10 minuti · mobilità e attivazione leggera");exercises.forEach{(name,def)->val sec=prefs.getInt("exercise_${name.hashCode()}",def);Surface(shape=RoundedCornerShape(12.dp),color=MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.45f),modifier=Modifier.fillMaxWidth().clickable{editExercise=name}){Row(Modifier.padding(12.dp),horizontalArrangement=Arrangement.SpaceBetween){Text(name);Text("$sec sec ✏️",fontWeight=FontWeight.Bold)}}};Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button(onClick={markTraining(prefs,"wakeup")}){Text("▶ Completa")};OutlinedButton(onClick={reminder="Risveglio muscolare" to LocalTime.of(6,45)}){Text("🔔")}}}}
-        item{ColoredCard(HomeStyle.color){Text("🏠 Allenamento a casa",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Text("Solo nei giorni senza palestra · pomeriggio/sera");listOf("💪 Total body · 25 min","🔥 Core · 15 min","🦵 Gambe · 20 min","🧘 Mobilità · 15 min").forEach{label->OutlinedButton(onClick={markTraining(prefs,"home_${label.hashCode()}")},modifier=Modifier.fillMaxWidth()){Text(label)}};OutlinedButton(onClick={reminder="Allenamento a casa" to LocalTime.of(18,0)}){Text("🔔 Promemoria")}}}
-        item{ColoredCard(GymStyle.color){Text("🏋️ Palestra",fontWeight=FontWeight.Bold);Text("Nei giorni palestra l'allenamento a casa non viene proposto automaticamente.");OutlinedButton(onClick={reminder="Palestra" to LocalTime.of(17,0)}){Text("🔔 Promemoria")}}}
-    }
-    editExercise?.let{name->val def=exercises.firstOrNull{it.first==name}?.second?:60;ExerciseDurationDialog(name,prefs.getInt("exercise_${name.hashCode()}",def),onDismiss={editExercise=null}){sec->prefs.edit().putInt("exercise_${name.hashCode()}",sec).apply();editExercise=null}}
-    reminder?.let{(label,time)->ReminderDialog(label,LocalDate.now(),time,context){reminder=null}}
-}
-@Composable fun ExerciseDurationDialog(name:String,initial:Int,onDismiss:()->Unit,onSave:(Int)->Unit){var sec by remember{mutableStateOf(initial.toString())};AlertDialog(onDismissRequest=onDismiss,title={Text("⏱️ $name")},text={OutlinedTextField(sec,{sec=it.filter(Char::isDigit)},label={Text("Durata in secondi")})},confirmButton={Button(onClick={onSave(sec.toIntOrNull()?.coerceIn(10,600)?:initial)}){Text("Salva")}},dismissButton={OutlinedButton(onClick=onDismiss){Text("Annulla")}})}
-
-// ---------- PIANO ----------
-@Composable
-fun PlanScreen(prefs:SharedPreferences){
-    var target by remember{mutableStateOf(prefs.getInt("calorie_target",1900).toString())};var waterTarget by remember{mutableStateOf(prefs.getInt("water_target_ml",2500).toString())};var calculated by remember{mutableStateOf(prefs.getInt("calorie_calculated",2300).toString())};var week by rememberSaveable{mutableIntStateOf(1)};var editDay by remember{mutableStateOf<Int?>(null)}
-    LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
-        item{Text("Piano",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold)}
-        item{Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){Text("📋 Piano della nutrizionista",fontWeight=FontWeight.Bold);Text("4 settimane modificabili separatamente. Puoi copiare una settimana sulle successive.");SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){(1..4).forEachIndexed{i,w->SegmentedButton(selected=week==w,onClick={week=w},shape=SegmentedButtonDefaults.itemShape(i,4)){Text("S$w")}}};(1..7).forEach{d->val name=listOf("Lunedì","Martedì","Mercoledì","Giovedì","Venerdì","Sabato","Domenica")[d-1];val text=prefs.getString("plan_w${week}_d$d","")?:"";OutlinedButton(onClick={editDay=d},modifier=Modifier.fillMaxWidth()){Column(Modifier.fillMaxWidth(),horizontalAlignment=Alignment.Start){Text("$name · ✏️",fontWeight=FontWeight.Bold);Text(text.ifBlank{"Inserisci il piano del giorno"},maxLines=2,style=MaterialTheme.typography.bodySmall)}}};OutlinedButton(onClick={copyWeek(prefs,week)},modifier=Modifier.fillMaxWidth()){Text("📄 Copia settimana $week nelle successive")}}}}
-        item{Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Text("🔥 Fabbisogno calorico",fontWeight=FontWeight.Bold);OutlinedTextField(calculated,{calculated=it.filter(Char::isDigit)},label={Text("Calcolato dall'app")},suffix={Text("kcal")});OutlinedTextField(target,{target=it.filter(Char::isDigit)},label={Text("Obiettivo impostato")},suffix={Text("kcal")});Text("Puoi usare il valore indicato dal nutrizionista.",style=MaterialTheme.typography.bodySmall);Button(onClick={prefs.edit().putInt("calorie_calculated",calculated.toIntOrNull()?.coerceIn(800,6000)?:2300).putInt("calorie_target",target.toIntOrNull()?.coerceIn(800,6000)?:1900).apply()}){Text("Salva")}}}}
-        item{Card{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Text("💧 Obiettivo idratazione",fontWeight=FontWeight.Bold);OutlinedTextField(waterTarget,{waterTarget=it.filter(Char::isDigit)},label={Text("ml al giorno")});Button(onClick={prefs.edit().putInt("water_target_ml",waterTarget.toIntOrNull()?.coerceIn(500,6000)?:2500).apply()}){Text("Salva")}}}}
-    }
-    editDay?.let{d->PlanDayEditDialog(week,d,prefs.getString("plan_w${week}_d$d","")?:"",onDismiss={editDay=null}){text->prefs.edit().putString("plan_w${week}_d$d",text).apply();editDay=null}}
-}
-@Composable fun PlanDayEditDialog(week:Int,day:Int,initial:String,onDismiss:()->Unit,onSave:(String)->Unit){var text by remember{mutableStateOf(initial)};AlertDialog(onDismissRequest=onDismiss,title={Text("Settimana $week · Giorno $day")},text={Column{Text("Inserisci liberamente colazione, spuntino, pranzo, quantità e orari.");OutlinedTextField(text,{text=it},modifier=Modifier.fillMaxWidth(),minLines=7,label={Text("Piano del giorno")})}},confirmButton={Button(onClick={onSave(text)}){Text("Salva")}},dismissButton={OutlinedButton(onClick=onDismiss){Text("Annulla")}})}
-
-// ---------- PROMEMORIA ----------
-@Composable
-fun ReminderDialog(label: String, date: LocalDate, baseTime: LocalTime, context: Context, onDismiss: () -> Unit) {
-    var customHours by remember { mutableStateOf("2") }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("🔔 Promemoria · $label") }, text = {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Scegli quando essere avvisato. La frase della notifica sarà ironica e varierà automaticamente.")
-            ReminderChoice("All'ora prevista") { scheduleReminder(context, label, date, baseTime) ; onDismiss() }
-            ReminderChoice("30 minuti prima") { scheduleReminder(context, label, date, baseTime.minusMinutes(30)); onDismiss() }
-            ReminderChoice("2 ore prima") { scheduleReminder(context, label, date, baseTime.minusHours(2)); onDismiss() }
-            ReminderChoice("Il giorno prima") { scheduleReminder(context, label, date.minusDays(1), baseTime); onDismiss() }
-            ReminderChoice("Tutto il giorno (ore 08:00)") { scheduleReminder(context, label, date, LocalTime.of(8,0)); onDismiss() }
-            OutlinedTextField(customHours, { customHours = it.filter(Char::isDigit) }, label = { Text("Ore prima personalizzate") })
-            OutlinedButton(onClick = { val h = customHours.toLongOrNull()?.coerceIn(1,168) ?: 2; val dt = LocalDateTime.of(date, baseTime).minusHours(h); scheduleReminder(context, label, dt.toLocalDate(), dt.toLocalTime()); onDismiss() }, modifier = Modifier.fillMaxWidth()) { Text("Imposta ore personalizzate") }
-        }
-    }, confirmButton = {}, dismissButton = { TextButton(onClick = onDismiss) { Text("Chiudi") } })
-}
-
-@Composable fun ReminderChoice(label: String, onClick: () -> Unit) { OutlinedButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) { Text(label) } }
+fun reminderToJson(r: ReminderSettings) = JSONObject().put("enabled",r.enabled).put("days",r.daysBefore).put("hours",r.hoursBefore).put("minutes",r.minutesBefore)
+fun reminderFromJson(o: JSONObject?): ReminderSettings = if (o == null) ReminderSettings() else ReminderSettings(o.optBoolean("enabled",true),o.optInt("days",0),o.optInt("hours",0),o.optInt("minutes",10))
+fun reminderLabel(r: ReminderSettings): String { if (!r.enabled) return "Promemoria disattivato"; val parts=mutableListOf<String>(); if(r.daysBefore>0)parts+="${r.daysBefore}g"; if(r.hoursBefore>0)parts+="${r.hoursBefore}h"; if(r.minutesBefore>0)parts+="${r.minutesBefore}min"; return if(parts.isEmpty())"all'orario esatto" else parts.joinToString(" ")+" prima" }
+fun parseTime(s: String): LocalTime = runCatching { LocalTime.parse(s, DateTimeFormatter.ofPattern("H:mm")) }.getOrDefault(LocalTime.of(9,0))
+fun formatDateShort(s: String): String = runCatching { LocalDate.parse(s).format(DateTimeFormatter.ofPattern("dd/MM/yyyy")) }.getOrDefault(s)
+fun formatDateFull(d: LocalDate): String = "${d.dayOfWeek.getDisplayName(TextStyle.FULL,Locale.ITALIAN).replaceFirstChar{it.uppercase()}} ${d.dayOfMonth} ${d.month.getDisplayName(TextStyle.FULL,Locale.ITALIAN)} ${d.year}"
+fun categoryEmoji(c: String): String = when { c.contains("Allen",true)->"🏋️"; c.contains("Cammin",true)->"🚶"; c.contains("libera",true)->"🌴"; c.contains("Spesa",true)->"🛒"; c.contains("Idrat",true)->"💧"; c.contains("Sonno",true)->"😴"; c.contains("personale",true)->"🌟"; else->"📅" }
+fun weekdayLabel(days: Set<Int>): String = days.sorted().joinToString(", ") { DayOfWeek.of(it).getDisplayName(TextStyle.SHORT, Locale.ITALIAN).replaceFirstChar { c -> c.uppercase() } }
 
 fun createNotificationChannel(context: Context) {
-    val manager = context.getSystemService(NotificationManager::class.java)
-    manager.createNotificationChannel(NotificationChannel("nutrition_reminders", "Promemoria Alessandro Nutrition", NotificationManager.IMPORTANCE_HIGH).apply { description = "Promemoria ironici per pasti, allenamenti e impegni" })
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val manager = context.getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(NotificationChannel(CHANNEL, "Promemoria", NotificationManager.IMPORTANCE_HIGH).apply { description = "Promemoria attività, pasti e impegni" })
+    }
 }
 
-fun scheduleReminder(context: Context, label: String, date: LocalDate, time: LocalTime) {
-    var trigger = LocalDateTime.of(date, time).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-    if (trigger <= System.currentTimeMillis()) trigger = System.currentTimeMillis() + 5000
-    val id = (label + date.toString() + time.toString() + System.nanoTime()).hashCode()
-    val intent = Intent(context, ReminderReceiver::class.java).putExtra("label", label).putExtra("id", id)
-    val pending = PendingIntent.getBroadcast(context, id, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+fun scheduleIfNeeded(context: Context, title: String, date: LocalDate, time: LocalTime, r: ReminderSettings, requestCode: Int) {
+    if (!r.enabled) return
+    val target = LocalDateTime.of(date,time).minusDays(r.daysBefore.toLong()).minusHours(r.hoursBefore.toLong()).minusMinutes(r.minutesBefore.toLong())
+    val millis = target.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+    if (millis <= System.currentTimeMillis()) return
+    val intent = Intent(context, ReminderReceiver::class.java).putExtra("title", title)
+    val pi = PendingIntent.getBroadcast(context, requestCode.absoluteValue, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     val alarm = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-    alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pending)
+    try { alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, millis, pi) } catch (_: SecurityException) { alarm.set(AlarmManager.RTC_WAKEUP, millis, pi) }
+}
+
+fun scheduleNextOccurrence(context: Context, r: RecurringRule, after: LocalDateTime = LocalDateTime.now()) {
+    if (!r.reminder.enabled || r.weekdays.isEmpty()) return
+    val start = runCatching { LocalDate.parse(r.startDate) }.getOrDefault(LocalDate.now())
+    val end = runCatching { LocalDate.parse(r.endDate) }.getOrDefault(start.plusYears(1))
+    var d = maxOf(start, after.toLocalDate())
+    val eventTime = parseTime(r.time)
+    while (!d.isAfter(end)) {
+        if (d.dayOfWeek.value in r.weekdays) {
+            val trigger = LocalDateTime.of(d, eventTime)
+                .minusDays(r.reminder.daysBefore.toLong())
+                .minusHours(r.reminder.hoursBefore.toLong())
+                .minusMinutes(r.reminder.minutesBefore.toLong())
+            if (trigger.isAfter(after)) {
+                scheduleRecurringAlarm(context, r, d, trigger)
+                return
+            }
+        }
+        d = d.plusDays(1)
+    }
+}
+
+fun scheduleRecurringAlarm(context: Context, r: RecurringRule, occurrence: LocalDate, trigger: LocalDateTime) {
+    val millis = trigger.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+    val intent = Intent(context, ReminderReceiver::class.java)
+        .putExtra("title", r.title)
+        .putExtra("recurring_rule_id", r.id)
+        .putExtra("occurrence_date", occurrence.toString())
+    val pi = PendingIntent.getBroadcast(context, (r.id.hashCode() * 31 + 7).absoluteValue, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    val alarm = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    try { alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, millis, pi) }
+    catch (_: SecurityException) { alarm.set(AlarmManager.RTC_WAKEUP, millis, pi) }
 }
 
 class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val label = intent.getStringExtra("label") ?: "Promemoria"
-        val id = intent.getIntExtra("id", System.currentTimeMillis().toInt())
-        val phrase = ironicReminder(label)
+        val title = intent.getStringExtra("title") ?: "Promemoria"
+        val notification = NotificationCompat.Builder(context, CHANNEL)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("🔔 $title")
+            .setContentText("È il momento di controllare questa attività.")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .build()
         if (Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
-            NotificationManagerCompat.from(context).notify(id, NotificationCompat.Builder(context, "nutrition_reminders").setSmallIcon(android.R.drawable.ic_popup_reminder).setContentTitle(label).setContentText(phrase).setStyle(NotificationCompat.BigTextStyle().bigText(phrase)).setPriority(NotificationCompat.PRIORITY_HIGH).setAutoCancel(true).build())
+            NotificationManagerCompat.from(context).notify(title.hashCode().absoluteValue, notification)
+        }
+        val ruleId = intent.getLongExtra("recurring_rule_id", -1L)
+        if (ruleId >= 0) {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            loadRules(prefs).firstOrNull { it.id == ruleId }?.let { rule ->
+                val occurrence = runCatching { LocalDate.parse(intent.getStringExtra("occurrence_date")) }.getOrDefault(LocalDate.now())
+                scheduleNextOccurrence(context, rule, LocalDateTime.of(occurrence.plusDays(1), LocalTime.MIDNIGHT))
+            }
         }
     }
 }
-
-fun ironicReminder(label: String): String {
-    val pool = when {
-        label.contains("Palestra", true) -> listOf("Il divano ha votato contro. Per fortuna non decide lui. 🏋️", "I muscoli hanno mandato un sollecito: pare sia ora di lavorare. 😄", "La palestra non si frequenta col pensiero. Ci tocca andare. 😏")
-        label.contains("Cammin", true) -> listOf("Le scarpe stanno iniziando a sentirsi decorative. Facciamole lavorare. 👟", "La passeggiata non si completa da sola, purtroppo. 🚶", "Due passi: il modo elegante di dire che oggi il divano perde. 😄")
-        label.contains("Colazione", true) -> listOf("Colazione: il caffè da solo continua a non essere un pasto completo. ☕", "È ora di dare al corpo qualcosa di più concreto delle buone intenzioni. 🍳", "Colazione pronta? I muscoli stanno controllando l'orologio. 😄")
-        label.contains("Spuntino", true) -> listOf("Spuntino! Le proteine hanno presentato richiesta di presenza. 🥤", "Piccola pausa, grande missione: non dimenticare lo spuntino. 😄", "È arrivato quel momento in cui una mela non può più fingere di essere invisibile. 🍎")
-        label.contains("Pranzo", true) -> listOf("Pranzo! Pesare il pollo non significa interrogarlo. 🍽️", "È ora di pranzo: bilancia pronta, stomaco pure. 😄", "Il piano alimentare ha appena bussato. Apriamo? 🍽️")
-        label.contains("acqua", true) || label.contains("Bere", true) -> listOf("La borraccia segnala abbandono emotivo. 💧", "Acqua: il corpo ha fatto richiesta ufficiale. 💦", "Un bicchiere adesso vale più di dieci promesse dopo. 😄")
-        label.contains("Lavor", true) -> listOf("Sì, oggi si lavora. Ho controllato due volte. 💼", "Promemoria professionale: il weekend non è ancora arrivato. 😄", "Lavoro in vista. Coraggio: anche questa giornata ha una fine. 😏")
-        else -> listOf("Promemoria ufficiale: il tuo futuro te ringrazierà. Forse. 😄", "Era troppo facile affidarsi alla memoria, quindi eccomi qui. 🔔", "Piccolo promemoria, grande tentativo di tenere tutto sotto controllo. 😎")
-    }
-    return pool[(System.nanoTime().absoluteValue % pool.size).toInt()]
-}
-
-// ---------- STORAGE / LOGICA ----------
-fun resolveMealText(prefs: SharedPreferences, dateRaw: String, meal: String, original: String): String {
-    val date = LocalDate.parse(dateRaw)
-    prefs.getString("meal_${date}_${meal}", null)?.let { return it }
-    val rules = prefs.getString("meal_rules_$meal", "[]") ?: "[]"
-    return runCatching {
-        val arr = JSONArray(rules)
-        var bestDate: LocalDate? = null; var bestText: String? = null
-        for (i in 0 until arr.length()) {
-            val o = arr.getJSONObject(i); val start = LocalDate.parse(o.getString("start"))
-            if (!date.isBefore(start) && (bestDate == null || start.isAfter(bestDate))) { bestDate = start; bestText = o.getString("text") }
-        }
-        bestText ?: original
-    }.getOrDefault(original)
-}
-
-fun saveMealOverride(prefs: SharedPreferences, meal: String, date: LocalDate, text: String, mode: String, startDate: LocalDate?) {
-    if (mode == "today") prefs.edit().putString("meal_${date}_${meal}", text).apply() else {
-        val start = if (mode == "future") date else (startDate ?: date)
-        val arr = runCatching { JSONArray(prefs.getString("meal_rules_$meal", "[]")) }.getOrElse { JSONArray() }
-        arr.put(JSONObject().put("start", start.toString()).put("text", text))
-        prefs.edit().putString("meal_rules_$meal", arr.toString()).apply()
-    }
-}
-fun clearMealOverrideForDate(prefs: SharedPreferences, meal: String, date: LocalDate) { prefs.edit().remove("meal_${date}_${meal}").apply() }
-
-fun addEvent(prefs: SharedPreferences, date: LocalDate, text: String) { val key = "events_$date"; val old = prefs.getStringSet(key, emptySet())?.toMutableSet() ?: mutableSetOf(); old.add(text); prefs.edit().putStringSet(key, old).apply() }
-fun getEventsForDate(prefs: SharedPreferences, date: LocalDate): List<String> = prefs.getStringSet("events_$date", emptySet())?.sorted() ?: emptyList()
-fun removeEvent(prefs:SharedPreferences,date:LocalDate,event:String){val key="events_$date";val set=prefs.getStringSet(key,emptySet())?.toMutableSet()?:mutableSetOf();set.remove(event);prefs.edit().putStringSet(key,set).apply()}
-fun replaceEvent(prefs:SharedPreferences,date:LocalDate,old:String,new:String){removeEvent(prefs,date,old);addEvent(prefs,date,new)}
-fun parseEventTime(event:String):LocalTime=runCatching{LocalTime.parse(event.substringAfterLast("·").trim())}.getOrDefault(LocalTime.of(9,0))
-fun parseTime(raw:String,fallback:LocalTime):LocalTime=runCatching{LocalTime.parse(raw)}.getOrDefault(fallback)
-
-fun resolveTimeText(prefs:SharedPreferences,date:LocalDate,type:String,original:String):String{
-    prefs.getString("time_${date}_$type",null)?.let{return it}
-    val arr=runCatching{JSONArray(prefs.getString("time_rules_$type","[]"))}.getOrElse{JSONArray()};var best:LocalDate?=null;var value:String?=null
-    for(i in 0 until arr.length()){val o=arr.getJSONObject(i);val st=LocalDate.parse(o.getString("start"));if(!date.isBefore(st)&&(best==null||st.isAfter(best))){best=st;value=o.getString("time")}}
-    return value?:original
-}
-fun saveTimeOverride(prefs:SharedPreferences,type:String,date:LocalDate,time:String,mode:String,startDate:LocalDate?){if(mode=="today")prefs.edit().putString("time_${date}_$type",time).apply()else{val start=if(mode=="future")date else(startDate?:date);val arr=runCatching{JSONArray(prefs.getString("time_rules_$type","[]"))}.getOrElse{JSONArray()};arr.put(JSONObject().put("start",start.toString()).put("time",time));prefs.edit().putString("time_rules_$type",arr.toString()).apply()}}
-fun copyWeek(prefs:SharedPreferences,week:Int){if(week>=4)return;val e=prefs.edit();for(w in week+1..4)for(d in 1..7)e.putString("plan_w${w}_d$d",prefs.getString("plan_w${week}_d$d","")?:"");e.apply()}
-
-fun saveWeight(prefs: SharedPreferences, date: LocalDate, kg: Double) { val arr = runCatching { JSONArray(prefs.getString("weights_json", "[]")) }.getOrElse { JSONArray() }; arr.put(JSONObject().put("date", date.toString()).put("kg", kg)); prefs.edit().putString("weights_json", arr.toString()).apply() }
-fun loadWeights(prefs: SharedPreferences): List<Pair<String, Double>> = runCatching { val arr = JSONArray(prefs.getString("weights_json", "[]")); (0 until arr.length()).map { i -> arr.getJSONObject(i).let { it.getString("date") to it.getDouble("kg") } }.sortedByDescending { it.first } }.getOrDefault(emptyList())
-
-fun calculateDiscipline(plan: List<PlanDay>, prefs: SharedPreferences): Map<String, Int> {
-    val today = LocalDate.now(); val recent = plan.filter { val d = LocalDate.parse(it.date); !d.isAfter(today) && ChronoUnit.DAYS.between(d,today) < 14 }
-    var foodPossible=0; var foodDone=0; var waterPossible=0; var waterDone=0; var actPossible=0; var actDone=0; var foodDays=0; var waterDays=0; var actCount=0
-    recent.forEach { d -> val k=d.date; val meals=listOf("breakfast","snack","lunch"); foodPossible += 3; val fd=meals.count { prefs.getBoolean("${k}_done_$it",false) }; foodDone += fd; if(fd==3) foodDays++; waterPossible++; val wt=prefs.getInt("water_target_ml",2500); if(prefs.getInt("${k}_water_ml",0)>=wt){waterDone++;waterDays++}; if(!d.activity.contains("Riposo",true)){actPossible++; if(prefs.getBoolean("${k}_done_activity",false)){actDone++;actCount++}} }
-    fun pct(done:Int, possible:Int)=if(possible==0)100 else (done*100/possible)
-    val food=pct(foodDone,foodPossible); val water=pct(waterDone,waterPossible); val activity=pct(actDone,actPossible); val general=(food+water+activity)/3
-    return mapOf("food" to food,"water" to water,"activity" to activity,"general" to general,"foodDays" to foodDays,"waterDays" to waterDays,"activityCount" to actCount)
-}
-
-fun calculateGoalCount(weights: List<Pair<String,Double>>, stats: Map<String,Int>, prefs: SharedPreferences): Int {
-    var count=0; val start=prefs.getFloat("initial_weight",0f).toDouble(); val current=weights.firstOrNull()?.second
-    if(start>0 && current!=null){ val lost=(start-current).coerceAtLeast(0.0); count += (lost/.5).toInt() }
-    count += (stats["foodDays"] ?: 0)/3; count += (stats["waterDays"] ?: 0)/3; count += (stats["activityCount"] ?: 0)/3
-    return count
-}
-fun markTraining(prefs: SharedPreferences, id: String) { val key="training_${LocalDate.now()}_$id"; prefs.edit().putBoolean(key,true).apply() }
-
-fun activityStyleFor(name: String): CategoryStyle = when { name.contains("Palestra",true)->GymStyle; name.contains("Cammin",true)->WalkStyle; name.contains("casa",true)->HomeStyle; name.contains("Lavor",true)->WorkStyle; else -> CategoryStyle("⭐", name, EveningStyle.color) }
-
-// ---------- DATABASE NUTRIZIONALE SEMPLICE ----------
-data class FoodInfo(val aliases: List<String>, val kcal: Double, val protein: Double, val carbs: Double, val fat: Double)
-val foods = listOf(
-    FoodInfo(listOf("anguria"),30.0,0.6,7.6,0.2), FoodInfo(listOf("mela","mele"),52.0,0.3,14.0,0.2), FoodInfo(listOf("banana","banane"),89.0,1.1,23.0,0.3),
-    FoodInfo(listOf("pollo","petto di pollo"),165.0,31.0,0.0,3.6), FoodInfo(listOf("tacchino"),135.0,29.0,0.0,1.5), FoodInfo(listOf("tonno"),116.0,26.0,0.0,1.0),
-    FoodInfo(listOf("yogurt greco"),73.0,10.0,4.0,1.8), FoodInfo(listOf("avena"),389.0,16.9,66.3,6.9), FoodInfo(listOf("proteine","proteine in polvere"),390.0,75.0,10.0,7.0),
-    FoodInfo(listOf("zucchine","zucchina"),17.0,1.2,3.1,0.3), FoodInfo(listOf("couscous"),376.0,12.8,77.4,0.6), FoodInfo(listOf("pasta proteica"),350.0,30.0,45.0,5.0),
-    FoodInfo(listOf("uovo","uova"),143.0,12.6,0.7,9.5), FoodInfo(listOf("feta"),264.0,14.2,4.1,21.3), FoodInfo(listOf("mandorle"),579.0,21.2,21.6,49.9)
-)
-
-fun estimateNutrition(text: String): NutritionEstimate {
-    var kcal=0.0; var p=0.0; var c=0.0; var f=0.0
-    val lower=text.lowercase(Locale.ITALIAN)
-    foods.forEach { info ->
-        val alias=info.aliases.firstOrNull { lower.contains(it) } ?: return@forEach
-        val idx=lower.indexOf(alias); val tail=lower.substring(idx+alias.length).take(30)
-        val grams=Regex("(\\d+(?:[.,]\\d+)?)\\s*g\\b").find(tail)?.groupValues?.get(1)?.replace(',','.')?.toDoubleOrNull() ?: return@forEach
-        val factor=grams/100.0; kcal += info.kcal*factor; p += info.protein*factor; c += info.carbs*factor; f += info.fat*factor
-    }
-    // olio: cucchiaino ~5g, cucchiaio ~10g. Il sale non aggiunge kcal.
-    val tablespoons=Regex("olio[^.]{0,30}(\\d+(?:[.,]\\d+)?)?\\s*cucchiai").find(lower)?.groupValues?.getOrNull(1)?.replace(',','.')?.toDoubleOrNull()
-    val teaspoons=Regex("olio[^.]{0,30}(\\d+(?:[.,]\\d+)?)?\\s*cucchiaini").find(lower)?.groupValues?.getOrNull(1)?.replace(',','.')?.toDoubleOrNull()
-    val oilGrams=(tablespoons ?: if(lower.contains("olio") && lower.contains("1 cucchiaio")) 1.0 else 0.0)*10 + (teaspoons ?: 0.0)*5
-    kcal += oilGrams*8.84; f += oilGrams
-    return NutritionEstimate(kcal.roundToInt(),p.roundToInt(),c.roundToInt(),f.roundToInt())
-}
-
-fun formatDate(raw: String): String { val d=LocalDate.parse(raw); return d.format(DateTimeFormatter.ofPattern("EEEE d MMMM yyyy",Locale.ITALIAN)).replaceFirstChar { it.uppercase() } }
-private val Long.absoluteValue: Long get() = if(this==Long.MIN_VALUE) Long.MAX_VALUE else kotlin.math.abs(this)
