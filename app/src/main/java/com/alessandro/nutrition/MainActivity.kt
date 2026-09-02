@@ -166,7 +166,7 @@ fun NotificationPermissionRequest(){
 }
 
 @Composable
-fun ScreenTitle(title:String,subtitle:String?=null,trailing:(@Composable()->Unit)?=null){
+fun ScreenTitle(title:String,subtitle:String?=null,trailing:(@Composable () -> Unit)?=null){
     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
         Column(Modifier.weight(1f)){
             Text(title,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.ExtraBold)
