@@ -59,7 +59,7 @@ data class SimpleEntry(val id:Long,val title:String,val date:String,val time:Str
 data class SupplementEntry(val id:Long,val name:String,val dose:String,val days:String,val time:String,val notes:String,val doneDate:String="",val reminder:Boolean=true)
 data class ShoppingItem(val id:Long,val name:String,val quantity:Double=1.0,val unit:String="pz",val category:String="",val note:String="",val bought:Boolean=false)
 data class GoalEntry(val id:Long,val title:String,val category:String,val target:Double,val progress:Double,val unit:String,val automatic:Boolean,val linkedMetric:String,val deadline:String="",val notes:String="")
-data class CalendarEvent(val id:Long,val title:String,val date:String,val time:String,val category:String,val notes:String="",val reminder:Boolean=false,val recurrence:String="Nessuna")
+data class CalendarEvent(val id:Long,val title:String,val date:String,val time:String,val category:String,val notes:String="",val reminder:Boolean=false,val recurrence:String="Nessuna",val durationMinutes:Int=60,val reminderMinutes:Int=10)
 data class ProfessionalLink(val id:Long,val name:String,val role:String,val inviteCode:String,val active:Boolean=true,val permissions:Set<String> = emptySet())
 data class Proposal(val id:Long,val professional:String,val area:String,val note:String,val date:String,val status:String="Da valutare")
 
@@ -272,7 +272,10 @@ fun HomeScreen(plan:List<PlanDay>,prefs:SharedPreferences,context:Context,onOpen
                             Text("${m.time} · ${m.name}",fontWeight=FontWeight.SemiBold)
                             Text(m.description,color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=13.sp)
                         }
-                        Text(if(m.reminder.enabled)"🔔" else "🔕")
+                        TextButton(onClick={
+                            val updated=meals.map{if(it.id==m.id) it.copy(reminder=m.reminder.copy(enabled=!m.reminder.enabled)) else it}
+                            saveMeals(prefs,today,updated);refresh++;NutritionWidgetProvider.requestRefresh(context)
+                        }){Text(if(m.reminder.enabled)"🔔" else "🔕",fontSize=20.sp)}
                     }
                 }
                 TextButton(onClick={onOpen("plan")}){Text("Apri piano alimentare")}
@@ -297,7 +300,10 @@ fun HomeScreen(plan:List<PlanDay>,prefs:SharedPreferences,context:Context,onOpen
                             Text(s.name,fontWeight=FontWeight.SemiBold)
                             Text("${s.dose} · ${s.time}",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Text(if(s.reminder)"🔔" else "🔕")
+                        TextButton(onClick={
+                            val upd=loadSupplements(prefs).map{if(it.id==s.id)it.copy(reminder=!s.reminder)else it}
+                            saveSupplements(prefs,upd);refresh++;NutritionWidgetProvider.requestRefresh(context)
+                        }){Text(if(s.reminder)"🔔" else "🔕",fontSize=20.sp)}
                     }
                 }
                 if(supplements.isEmpty()) Text("Aggiungi Vitamine, Magnesio o altri integratori.",color=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -343,7 +349,9 @@ fun SimpleHomeRow(e:SimpleEntry,prefs:SharedPreferences,key:String,onChange:()->
             saveSimple(prefs,key,loadSimple(prefs,key).map{if(it.id==e.id)it.copy(done=!e.done)else it});onChange()
         }
         Column(Modifier.weight(1f).padding(start=10.dp)){Text(e.title,fontWeight=FontWeight.SemiBold);Text("${e.time} ${e.notes}".trim(),fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
-        Text(if(e.reminder)"🔔" else "")
+        TextButton(onClick={
+            saveSimple(prefs,key,loadSimple(prefs,key).map{if(it.id==e.id)it.copy(reminder=!e.reminder)else it});onChange()
+        }){Text(if(e.reminder)"🔔" else "🔕",fontSize=19.sp)}
     }
 }
 
@@ -351,19 +359,57 @@ fun SimpleHomeRow(e:SimpleEntry,prefs:SharedPreferences,key:String,onChange:()->
 fun TrainingScreen(prefs:SharedPreferences,context:Context){
     var refresh by remember{mutableIntStateOf(0)}
     var add by remember{mutableStateOf(false)}
+    var preset by remember{mutableStateOf("")}
     val list=remember(refresh){loadSimple(prefs,"activities")}
-    if(add)SimpleEntryDialog("Nuovo allenamento",LocalDate.now().toString(),onDismiss={add=false}){e->
-        saveSimple(prefs,"activities",list+e.copy(type="Allenamento"));add=false;refresh++;NutritionWidgetProvider.requestRefresh(context)
+    val presets=listOf("🏋️ Palestra","🚶 Camminata","🤸 Allenamento corpo libero")
+
+    if(add){
+        SimpleEntryDialog(
+            if(preset.isBlank()) "Nuovo allenamento" else preset,
+            LocalDate.now().toString(),
+            onDismiss={add=false;preset=""}
+        ){e->
+            val title=if(preset.isBlank()) e.title else preset
+            saveSimple(prefs,"activities",list+e.copy(title=title,type="Allenamento"))
+            add=false;preset="";refresh++;NutritionWidgetProvider.requestRefresh(context)
+        }
     }
+
     LazyColumn(contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
-        item{ScreenTitle("Allenamenti","Programmazione e storico",trailing={Button(onClick={add=true}){Text("+ Aggiungi")}})}
-        items(list.sortedByDescending{it.date}){e->
+        item{ScreenTitle("Allenamenti","Attività predefinite e storico",trailing={
+            Button(onClick={preset="";add=true}){Text("+ Altro")}
+        })}
+        item{
+            AppCard{
+                Text("Tipi di allenamento",fontWeight=FontWeight.ExtraBold)
+                presets.forEach{kind->
+                    FilledTonalButton(
+                        onClick={preset=kind;add=true},
+                        modifier=Modifier.fillMaxWidth()
+                    ){Text(kind)}
+                }
+                Text("Puoi aggiungere anche qualsiasi altro tipo di attività.",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        item{Text("Storico",fontWeight=FontWeight.ExtraBold,fontSize=18.sp)}
+        items(list.sortedWith(compareByDescending<SimpleEntry>{it.date}.thenByDescending{it.time})){e->
             AppCard{
                 Row(verticalAlignment=Alignment.CenterVertically){
-                    CircleCheck(e.done){saveSimple(prefs,"activities",list.map{if(it.id==e.id)it.copy(done=!e.done)else it});refresh++}
-                    Column(Modifier.weight(1f).padding(start=10.dp)){Text(e.title,fontWeight=FontWeight.Bold);Text("${e.date} · ${e.time} · ${e.notes}",color=MaterialTheme.colorScheme.onSurfaceVariant)}
-                    TextButton(onClick={saveSimple(prefs,"activities",list.filterNot{it.id==e.id});refresh++}){Text("Elimina")}
+                    CircleCheck(e.done){
+                        saveSimple(prefs,"activities",list.map{if(it.id==e.id)it.copy(done=!e.done)else it})
+                        refresh++;NutritionWidgetProvider.requestRefresh(context)
+                    }
+                    Column(Modifier.weight(1f).padding(start=10.dp)){
+                        Text(e.title,fontWeight=FontWeight.Bold)
+                        Text("${e.date} · ${e.time}",color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        if(e.notes.isNotBlank())Text(e.notes,fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton(onClick={
+                        saveSimple(prefs,"activities",list.map{if(it.id==e.id)it.copy(reminder=!e.reminder)else it})
+                        refresh++;NutritionWidgetProvider.requestRefresh(context)
+                    }){Text(if(e.reminder)"🔔" else "🔕")}
                 }
+                TextButton(onClick={saveSimple(prefs,"activities",list.filterNot{it.id==e.id});refresh++;NutritionWidgetProvider.requestRefresh(context)}){Text("Elimina")}
             }
         }
     }
@@ -371,39 +417,86 @@ fun TrainingScreen(prefs:SharedPreferences,context:Context){
 
 @Composable
 fun PlanScreen(plan:List<PlanDay>,prefs:SharedPreferences,context:Context){
-    var weekStart by rememberSaveable{mutableStateOf(LocalDate.now().with(DayOfWeek.MONDAY).toString())}
-    val start=LocalDate.parse(weekStart)
-    var selected by rememberSaveable{mutableStateOf(LocalDate.now().toString())}
+    val today=LocalDate.now()
+    val firstOfMonth=today.withDayOfMonth(1)
+    val cycleStart=firstOfMonth.with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    val currentIndex=((java.time.temporal.ChronoUnit.DAYS.between(cycleStart,today)/7).toInt()).coerceIn(0,3)
+    var weekIndex by rememberSaveable{mutableIntStateOf(currentIndex)}
+    var selected by rememberSaveable{mutableStateOf(cycleStart.plusWeeks(currentIndex.toLong()).plusDays((today.dayOfWeek.value-1).toLong()).toString())}
     var refresh by remember{mutableIntStateOf(0)}
-    val date=LocalDate.parse(selected)
-    val meals=remember(selected,refresh){loadMealsFor(date,plan,prefs)}
+    val start=cycleStart.plusWeeks(weekIndex.toLong())
+    val selectedDate=LocalDate.parse(selected)
+    val date=if(selectedDate.isBefore(start)||selectedDate.isAfter(start.plusDays(6))) start else selectedDate
+    val meals=remember(date.toString(),refresh){loadMealsFor(date,plan,prefs)}
+    val dayNames=listOf("Lun","Mar","Mer","Gio","Ven","Sab","Dom")
+
     LazyColumn(contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
         item{
-            ScreenTitle("Piano alimentare","Settimana ${start.format(DateTimeFormatter.ofPattern("dd/MM"))} - ${start.plusDays(6).format(DateTimeFormatter.ofPattern("dd/MM"))}")
-            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-                OutlinedButton(onClick={weekStart=start.minusWeeks(1).toString()}){Text("‹")}
-                Button(onClick={weekStart=LocalDate.now().with(DayOfWeek.MONDAY).toString();selected=LocalDate.now().toString()}){Text("Settimana attuale")}
-                OutlinedButton(onClick={weekStart=start.plusWeeks(1).toString()}){Text("›")}
+            ScreenTitle(
+                "Piano alimentare",
+                "Ciclo di 4 settimane · ${today.month.getDisplayName(TextStyle.FULL,Locale.ITALIAN).replaceFirstChar{it.uppercase()}} ${today.year}"
+            )
+        }
+        item{
+            AppCard{
+                Row(verticalAlignment=Alignment.CenterVertically){
+                    OutlinedButton(
+                        onClick={if(weekIndex>0){weekIndex--;selected=cycleStart.plusWeeks(weekIndex.toLong()).toString()}},
+                        enabled=weekIndex>0
+                    ){Text("‹")}
+                    Text("Settimana ${weekIndex+1}",fontWeight=FontWeight.ExtraBold,fontSize=20.sp,modifier=Modifier.weight(1f),textAlign=androidx.compose.ui.text.style.TextAlign.Center)
+                    OutlinedButton(
+                        onClick={if(weekIndex<3){weekIndex++;selected=cycleStart.plusWeeks(weekIndex.toLong()).toString()}},
+                        enabled=weekIndex<3
+                    ){Text("›")}
+                }
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(5.dp)){
+                    (0..3).forEach{i->
+                        FilterChip(selected=weekIndex==i,onClick={weekIndex=i;selected=cycleStart.plusWeeks(i.toLong()).toString()},label={Text("${i+1}")},modifier=Modifier.weight(1f))
+                    }
+                }
+                Text("${start.format(DateTimeFormatter.ofPattern("dd/MM"))} – ${start.plusDays(6).format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))}",fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         item{
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(5.dp)){
-                (0..6).forEach{i->
-                    val d=start.plusDays(i.toLong())
-                    FilterChip(
-                        selected=d.toString()==selected,
-                        onClick={selected=d.toString()},
-                        label={Text("${d.dayOfWeek.getDisplayName(TextStyle.SHORT,Locale.ITALIAN)}\n${d.dayOfMonth}",fontSize=11.sp)},
-                        modifier=Modifier.weight(1f)
-                    )
+            AppCard{
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(4.dp)){
+                    (0..6).forEach{i->
+                        val d=start.plusDays(i.toLong())
+                        val isSel=d==date
+                        val isToday=d==today
+                        Surface(
+                            modifier=Modifier.weight(1f).clickable{selected=d.toString()},
+                            shape=RoundedCornerShape(12.dp),
+                            color=if(isSel)MaterialTheme.colorScheme.primary.copy(alpha=.22f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.55f),
+                            border=BorderStroke(if(isToday)2.dp else 1.dp,if(isToday)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)
+                        ){
+                            Column(Modifier.padding(vertical=9.dp),horizontalAlignment=Alignment.CenterHorizontally){
+                                Text(dayNames[i],fontSize=10.sp,fontWeight=FontWeight.SemiBold,maxLines=1)
+                                Text("${d.dayOfMonth}",fontWeight=FontWeight.ExtraBold,fontSize=15.sp)
+                            }
+                        }
+                    }
                 }
             }
         }
         item{
+            Text(
+                "${date.dayOfWeek.getDisplayName(TextStyle.FULL,Locale.ITALIAN).replaceFirstChar{it.uppercase()}} ${date.dayOfMonth} ${date.month.getDisplayName(TextStyle.FULL,Locale.ITALIAN)}",
+                fontWeight=FontWeight.ExtraBold,fontSize=18.sp
+            )
+        }
+        item{
             if(date.dayOfWeek==DayOfWeek.SUNDAY){
-                var free by remember(selected,refresh){mutableStateOf(prefs.getBoolean("sunday_free_$selected",true))}
+                var free by remember(date.toString(),refresh){mutableStateOf(prefs.getBoolean("sunday_free_$date",true))}
                 AppCard{
-                    Row(verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("Domenica libera",fontWeight=FontWeight.Bold);Text("Se attiva non vengono inventati pasti.",color=MaterialTheme.colorScheme.onSurfaceVariant)};Switch(checked=free,onCheckedChange={free=it;prefs.edit().putBoolean("sunday_free_$selected",it).apply();refresh++})}
+                    Row(verticalAlignment=Alignment.CenterVertically){
+                        Column(Modifier.weight(1f)){
+                            Text("Domenica libera",fontWeight=FontWeight.Bold)
+                            Text("Se attiva non vengono inseriti pasti automatici.",color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(checked=free,onCheckedChange={free=it;prefs.edit().putBoolean("sunday_free_$date",it).apply();refresh++})
+                    }
                 }
             }
         }
@@ -411,16 +504,23 @@ fun PlanScreen(plan:List<PlanDay>,prefs:SharedPreferences,context:Context){
             AppCard{
                 Row(verticalAlignment=Alignment.CenterVertically){
                     CircleCheck(m.done){saveMeals(prefs,date,meals.map{if(it.id==m.id)it.copy(done=!m.done)else it});refresh++}
-                    Column(Modifier.weight(1f).padding(start=10.dp)){Text("${m.time} · ${m.name}",fontWeight=FontWeight.Bold);Text(m.description,color=MaterialTheme.colorScheme.onSurfaceVariant)}
-                    Text(if(m.reminder.enabled)"🔔" else "🔕")
+                    Column(Modifier.weight(1f).padding(start=10.dp)){
+                        Text("${m.time} · ${m.name}",fontWeight=FontWeight.Bold)
+                        Text(m.description,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        if(m.optional)Text("Facoltativo",fontSize=12.sp,color=MaterialTheme.colorScheme.primary)
+                    }
+                    TextButton(onClick={
+                        saveMeals(prefs,date,meals.map{if(it.id==m.id)it.copy(reminder=m.reminder.copy(enabled=!m.reminder.enabled))else it})
+                        refresh++;NutritionWidgetProvider.requestRefresh(context)
+                    }){Text(if(m.reminder.enabled)"🔔" else "🔕",fontSize=20.sp)}
                 }
             }
         }
         item{
             if(meals.none{it.name.contains("Cena",true)}){
                 OutlinedButton(onClick={
-                    val dinner=MealEntry("${selected}_dinner",selected,"🍲 Cena","20:00","Cena da definire",optional=true)
-                    saveMeals(prefs,date,meals+dinner);prefs.edit().putBoolean("dinner_enabled_$selected",true).apply();refresh++;NutritionWidgetProvider.requestRefresh(context)
+                    val dinner=MealEntry("${date}_dinner",date.toString(),"🍲 Cena","20:00","Cena da definire",optional=true)
+                    saveMeals(prefs,date,meals+dinner);prefs.edit().putBoolean("dinner_enabled_$date",true).apply();refresh++;NutritionWidgetProvider.requestRefresh(context)
                 },modifier=Modifier.fillMaxWidth()){Text("+ Aggiungi cena facoltativa")}
             }
         }
@@ -430,35 +530,148 @@ fun PlanScreen(plan:List<PlanDay>,prefs:SharedPreferences,context:Context){
 @Composable
 fun CalendarScreen(prefs:SharedPreferences,context:Context){
     val today=LocalDate.now()
-    var weekStart by rememberSaveable{mutableStateOf(today.with(DayOfWeek.MONDAY).toString())}
+    var mode by rememberSaveable{mutableStateOf(prefs.getString("calendar_mode","Mese")?:"Mese")}
+    var anchor by rememberSaveable{mutableStateOf(today.toString())}
     var selected by rememberSaveable{mutableStateOf(today.toString())}
     var refresh by remember{mutableIntStateOf(0)}
     var add by remember{mutableStateOf(false)}
-    val start=LocalDate.parse(weekStart)
+    var editing by remember{mutableStateOf<CalendarEvent?>(null)}
+    val anchorDate=LocalDate.parse(anchor)
     val events=remember(refresh){loadEvents(prefs)}
-    if(add)CalendarDialog(LocalDate.parse(selected),onDismiss={add=false}){e->
-        saveEvents(prefs,events+e);add=false;refresh++;NutritionWidgetProvider.requestRefresh(context)
+
+    if(add || editing!=null){
+        CalendarDialog(
+            date=editing?.let{LocalDate.parse(it.date)}?:LocalDate.parse(selected),
+            existing=editing,
+            onDismiss={add=false;editing=null}
+        ){e->
+            val updated=if(editing==null) events+e else events.map{if(it.id==editing!!.id)e.copy(id=editing!!.id)else it}
+            saveEvents(prefs,updated);add=false;editing=null;refresh++;NutritionWidgetProvider.requestRefresh(context)
+        }
     }
+
+    fun move(delta:Int){
+        val next=when(mode){
+            "Settimana"->anchorDate.plusWeeks(delta.toLong())
+            "Anno"->anchorDate.plusYears(delta.toLong())
+            else->anchorDate.plusMonths(delta.toLong())
+        }
+        anchor=next.toString()
+        selected=when(mode){
+            "Settimana"->next.with(DayOfWeek.MONDAY).toString()
+            "Anno"->next.withDayOfYear(1).toString()
+            else->next.withDayOfMonth(1).toString()
+        }
+    }
+
     LazyColumn(contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
         item{
-            ScreenTitle("Calendario","Oggi è ${today.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))}",trailing={Button(onClick={add=true}){Text("+")}})
-            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(onClick={weekStart=start.minusWeeks(1).toString()}){Text("‹")};Button(onClick={weekStart=today.with(DayOfWeek.MONDAY).toString();selected=today.toString()}){Text("Oggi")};OutlinedButton(onClick={weekStart=start.plusWeeks(1).toString()}){Text("›")}}
+            ScreenTitle("Calendario","Scegli settimana, mese o anno",trailing={Button(onClick={add=true}){Text("+")}})
         }
         item{
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(4.dp)){
-                (0..6).forEach{i->
-                    val d=start.plusDays(i.toLong())
-                    val isToday=d==today
-                    val isSel=d.toString()==selected
-                    Surface(
-                        modifier=Modifier.weight(1f).clickable{selected=d.toString()},
-                        shape=RoundedCornerShape(12.dp),
-                        color=if(isSel)MaterialTheme.colorScheme.primary.copy(alpha=.28f) else MaterialTheme.colorScheme.surface,
-                        border=BorderStroke(if(isToday)3.dp else 1.dp,if(isToday)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)
-                    ){Column(Modifier.padding(vertical=8.dp),horizontalAlignment=Alignment.CenterHorizontally){Text(d.dayOfWeek.getDisplayName(TextStyle.SHORT,Locale.ITALIAN),fontSize=11.sp);Text("${d.dayOfMonth}",fontWeight=FontWeight.Bold)}}
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(5.dp)){
+                listOf("Settimana","Mese","Anno").forEach{m->
+                    FilterChip(
+                        selected=mode==m,
+                        onClick={mode=m;prefs.edit().putString("calendar_mode",m).apply()},
+                        label={Text(m,fontSize=12.sp)},
+                        modifier=Modifier.weight(1f)
+                    )
                 }
             }
         }
+        item{
+            AppCard{
+                val title=when(mode){
+                    "Settimana"->{
+                        val ws=anchorDate.with(DayOfWeek.MONDAY)
+                        "${ws.format(DateTimeFormatter.ofPattern("dd MMM"))} – ${ws.plusDays(6).format(DateTimeFormatter.ofPattern("dd MMM yyyy"))}"
+                    }
+                    "Anno"->"${anchorDate.year}"
+                    else->"${anchorDate.month.getDisplayName(TextStyle.FULL,Locale.ITALIAN).replaceFirstChar{it.uppercase()}} ${anchorDate.year}"
+                }
+                Row(verticalAlignment=Alignment.CenterVertically){
+                    OutlinedButton(onClick={move(-1)}){Text("‹")}
+                    Text(title,fontWeight=FontWeight.ExtraBold,fontSize=18.sp,modifier=Modifier.weight(1f),textAlign=androidx.compose.ui.text.style.TextAlign.Center)
+                    OutlinedButton(onClick={move(1)}){Text("›")}
+                }
+                Button(onClick={anchor=today.toString();selected=today.toString()},modifier=Modifier.fillMaxWidth()){Text("Oggi")}
+            }
+        }
+
+        if(mode=="Settimana"){
+            item{
+                val ws=anchorDate.with(DayOfWeek.MONDAY)
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(4.dp)){
+                    (0..6).forEach{i->
+                        val d=ws.plusDays(i.toLong())
+                        val isToday=d==today
+                        val isSel=d.toString()==selected
+                        Surface(
+                            modifier=Modifier.weight(1f).clickable{selected=d.toString()},
+                            shape=RoundedCornerShape(12.dp),
+                            color=if(isSel)MaterialTheme.colorScheme.primary.copy(alpha=.28f) else MaterialTheme.colorScheme.surface,
+                            border=BorderStroke(if(isToday)3.dp else 1.dp,if(isToday)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)
+                        ){Column(Modifier.padding(vertical=8.dp),horizontalAlignment=Alignment.CenterHorizontally){
+                            Text(d.dayOfWeek.getDisplayName(TextStyle.SHORT,Locale.ITALIAN),fontSize=10.sp,maxLines=1)
+                            Text("${d.dayOfMonth}",fontWeight=FontWeight.Bold)
+                        }}
+                    }
+                }
+            }
+        } else if(mode=="Mese"){
+            item{
+                val first=anchorDate.withDayOfMonth(1)
+                val days=first.lengthOfMonth()
+                val leading=first.dayOfWeek.value-1
+                AppCard{
+                    Row(Modifier.fillMaxWidth()){
+                        listOf("L","M","M","G","V","S","D").forEach{Text(it,modifier=Modifier.weight(1f),textAlign=androidx.compose.ui.text.style.TextAlign.Center,fontWeight=FontWeight.Bold,fontSize=12.sp)}
+                    }
+                    var day=1-leading
+                    repeat(6){
+                        Row(Modifier.fillMaxWidth()){
+                            repeat(7){
+                                if(day<1 || day>days){
+                                    Box(Modifier.weight(1f).height(44.dp))
+                                }else{
+                                    val d=first.withDayOfMonth(day)
+                                    val isToday=d==today
+                                    val isSel=d.toString()==selected
+                                    Surface(
+                                        modifier=Modifier.weight(1f).height(44.dp).padding(2.dp).clickable{selected=d.toString()},
+                                        shape=RoundedCornerShape(10.dp),
+                                        color=if(isSel)MaterialTheme.colorScheme.primary.copy(alpha=.28f) else Color.Transparent,
+                                        border=if(isToday)BorderStroke(2.dp,MaterialTheme.colorScheme.primary) else null
+                                    ){Box(contentAlignment=Alignment.Center){Text("$day",fontWeight=if(isToday||isSel)FontWeight.ExtraBold else FontWeight.Normal)}}
+                                }
+                                day++
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            item{
+                AppCard{
+                    for(row in 0..3){
+                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                            for(col in 0..2){
+                                val month=row*3+col+1
+                                val d=LocalDate.of(anchorDate.year,month,1)
+                                val containsToday=today.year==anchorDate.year && today.monthValue==month
+                                OutlinedButton(
+                                    onClick={anchor=d.toString();selected=d.toString();mode="Mese";prefs.edit().putString("calendar_mode","Mese").apply()},
+                                    border=BorderStroke(if(containsToday)2.dp else 1.dp,if(containsToday)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
+                                    modifier=Modifier.weight(1f)
+                                ){Text(d.month.getDisplayName(TextStyle.SHORT,Locale.ITALIAN).replaceFirstChar{it.uppercase()},fontSize=12.sp)}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         item{
             val d=LocalDate.parse(selected)
             Text("${d.dayOfWeek.getDisplayName(TextStyle.FULL,Locale.ITALIAN).replaceFirstChar{it.uppercase()}} ${d.dayOfMonth} ${d.month.getDisplayName(TextStyle.FULL,Locale.ITALIAN)} ${d.year}",fontWeight=FontWeight.ExtraBold,fontSize=18.sp)
@@ -466,8 +679,21 @@ fun CalendarScreen(prefs:SharedPreferences,context:Context){
         }
         items(events.filter{it.date==selected}.sortedBy{it.time}){e->
             AppCard{
-                Row{Column(Modifier.weight(1f)){Text("${e.time} · ${e.title}",fontWeight=FontWeight.Bold);Text("${e.category} · ${e.recurrence}",color=MaterialTheme.colorScheme.onSurfaceVariant);if(e.notes.isNotBlank())Text(e.notes)};Text(if(e.reminder)"🔔" else "")}
-                TextButton(onClick={saveEvents(prefs,events.filterNot{it.id==e.id});refresh++}){Text("Elimina")}
+                Row(verticalAlignment=Alignment.CenterVertically){
+                    Column(Modifier.weight(1f)){
+                        Text("${e.time} · ${e.title}",fontWeight=FontWeight.Bold)
+                        Text("${e.category} · ${e.recurrence} · ${e.durationMinutes} min",color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        if(e.notes.isNotBlank())Text(e.notes)
+                        if(e.reminder)Text("Promemoria ${e.reminderMinutes} min prima",fontSize=12.sp,color=MaterialTheme.colorScheme.primary)
+                    }
+                    TextButton(onClick={
+                        saveEvents(prefs,events.map{if(it.id==e.id)it.copy(reminder=!e.reminder)else it});refresh++;NutritionWidgetProvider.requestRefresh(context)
+                    }){Text(if(e.reminder)"🔔" else "🔕",fontSize=20.sp)}
+                }
+                Row{
+                    TextButton(onClick={editing=e}){Text("Modifica")}
+                    TextButton(onClick={saveEvents(prefs,events.filterNot{it.id==e.id});refresh++;NutritionWidgetProvider.requestRefresh(context)}){Text("Elimina")}
+                }
             }
         }
         if(events.none{it.date==selected}) item{Text("Nessun evento per questo giorno.",color=MaterialTheme.colorScheme.onSurfaceVariant)}
@@ -690,9 +916,44 @@ fun GoalDialog(onDismiss:()->Unit,onSave:(GoalEntry)->Unit){
 }
 
 @Composable
-fun CalendarDialog(date:LocalDate,onDismiss:()->Unit,onSave:(CalendarEvent)->Unit){
-    var title by remember{mutableStateOf("")};var d by remember{mutableStateOf(date.toString())};var time by remember{mutableStateOf("09:00")};var cat by remember{mutableStateOf("Personale")};var notes by remember{mutableStateOf("")};var reminder by remember{mutableStateOf(false)};var recurrence by remember{mutableStateOf("Nessuna")}
-    AlertDialog(onDismissRequest=onDismiss,title={Text("Nuovo evento")},text={Column(verticalArrangement=Arrangement.spacedBy(7.dp)){OutlinedTextField(title,{title=it},label={Text("Titolo")});OutlinedTextField(d,{d=it},label={Text("Data")});OutlinedTextField(time,{time=it},label={Text("Ora")});OutlinedTextField(cat,{cat=it},label={Text("Categoria")});OutlinedTextField(notes,{notes=it},label={Text("Note")});OutlinedTextField(recurrence,{recurrence=it},label={Text("Ricorrenza")});Row{Text("Promemoria",Modifier.weight(1f));Switch(reminder,{reminder=it})}}},confirmButton={Button(enabled=title.isNotBlank(),onClick={onSave(CalendarEvent(System.currentTimeMillis(),title,d,time,cat,notes,reminder,recurrence))}){Text("Salva")}},dismissButton={TextButton(onClick=onDismiss){Text("Annulla")}})
+fun CalendarDialog(date:LocalDate,existing:CalendarEvent?=null,onDismiss:()->Unit,onSave:(CalendarEvent)->Unit){
+    var title by remember(existing?.id){mutableStateOf(existing?.title?:"")}
+    var d by remember(existing?.id){mutableStateOf(existing?.date?:date.toString())}
+    var time by remember(existing?.id){mutableStateOf(existing?.time?:"09:00")}
+    var cat by remember(existing?.id){mutableStateOf(existing?.category?:"Personale")}
+    var notes by remember(existing?.id){mutableStateOf(existing?.notes?:"")}
+    var reminder by remember(existing?.id){mutableStateOf(existing?.reminder?:false)}
+    var recurrence by remember(existing?.id){mutableStateOf(existing?.recurrence?:"Nessuna")}
+    var duration by remember(existing?.id){mutableStateOf((existing?.durationMinutes?:60).toString())}
+    var lead by remember(existing?.id){mutableStateOf((existing?.reminderMinutes?:10).toString())}
+
+    AlertDialog(
+        onDismissRequest=onDismiss,
+        title={Text(if(existing==null)"Nuovo evento" else "Modifica evento")},
+        text={
+            Column(verticalArrangement=Arrangement.spacedBy(7.dp)){
+                OutlinedTextField(title,{title=it},label={Text("Titolo")})
+                OutlinedTextField(d,{d=it},label={Text("Data (AAAA-MM-GG)")})
+                OutlinedTextField(time,{time=it},label={Text("Ora")})
+                OutlinedTextField(duration,{duration=it.filter(Char::isDigit)},label={Text("Durata in minuti")})
+                OutlinedTextField(cat,{cat=it},label={Text("Categoria")})
+                OutlinedTextField(notes,{notes=it},label={Text("Note")})
+                OutlinedTextField(recurrence,{recurrence=it},label={Text("Ricorrenza: Nessuna/Giornaliera/Settimanale/Mensile")})
+                Row(verticalAlignment=Alignment.CenterVertically){Text("Promemoria",Modifier.weight(1f));Switch(reminder,{reminder=it})}
+                if(reminder)OutlinedTextField(lead,{lead=it.filter(Char::isDigit)},label={Text("Avvisa quanti minuti prima")})
+            }
+        },
+        confirmButton={
+            Button(enabled=title.isNotBlank(),onClick={
+                onSave(CalendarEvent(
+                    existing?.id?:System.currentTimeMillis(),title,d,time,cat,notes,reminder,recurrence,
+                    duration.toIntOrNull()?.coerceAtLeast(0)?:60,
+                    lead.toIntOrNull()?.coerceAtLeast(0)?:10
+                ))
+            }){Text("Salva")}
+        },
+        dismissButton={TextButton(onClick=onDismiss){Text("Annulla")}}
+    )
 }
 
 @Composable
@@ -769,8 +1030,8 @@ private fun automaticGoalProgress(g:GoalEntry,prefs:SharedPreferences):Double=wh
     else->g.progress
 }
 
-private fun saveEvents(prefs:SharedPreferences,list:List<CalendarEvent>){val a=JSONArray();list.forEach{e->a.put(JSONObject().put("id",e.id).put("title",e.title).put("date",e.date).put("time",e.time).put("category",e.category).put("notes",e.notes).put("reminder",e.reminder).put("recurrence",e.recurrence))};prefs.edit().putString("events_v24",a.toString()).apply()}
-private fun loadEvents(prefs:SharedPreferences):List<CalendarEvent>{return try{val a=JSONArray(prefs.getString("events_v24","[]"));buildList{for(i in 0 until a.length()){val o=a.getJSONObject(i);add(CalendarEvent(o.getLong("id"),o.getString("title"),o.getString("date"),o.optString("time"),o.optString("category"),o.optString("notes"),o.optBoolean("reminder"),o.optString("recurrence","Nessuna")))}}}catch(_:Exception){emptyList()}}
+private fun saveEvents(prefs:SharedPreferences,list:List<CalendarEvent>){val a=JSONArray();list.forEach{e->a.put(JSONObject().put("id",e.id).put("title",e.title).put("date",e.date).put("time",e.time).put("category",e.category).put("notes",e.notes).put("reminder",e.reminder).put("recurrence",e.recurrence).put("durationMinutes",e.durationMinutes).put("reminderMinutes",e.reminderMinutes))};prefs.edit().putString("events_v24",a.toString()).apply()}
+private fun loadEvents(prefs:SharedPreferences):List<CalendarEvent>{return try{val a=JSONArray(prefs.getString("events_v24","[]"));buildList{for(i in 0 until a.length()){val o=a.getJSONObject(i);add(CalendarEvent(o.getLong("id"),o.getString("title"),o.getString("date"),o.optString("time"),o.optString("category"),o.optString("notes"),o.optBoolean("reminder"),o.optString("recurrence","Nessuna"),o.optInt("durationMinutes",60),o.optInt("reminderMinutes",10)))}}}catch(_:Exception){emptyList()}}
 
 private fun saveProfessionals(prefs:SharedPreferences,list:List<ProfessionalLink>){val a=JSONArray();list.forEach{p->a.put(JSONObject().put("id",p.id).put("name",p.name).put("role",p.role).put("inviteCode",p.inviteCode).put("active",p.active).put("permissions",JSONArray(p.permissions.toList())))};prefs.edit().putString("professionals_v24",a.toString()).apply()}
 private fun loadProfessionals(prefs:SharedPreferences):List<ProfessionalLink>{return try{val a=JSONArray(prefs.getString("professionals_v24","[]"));buildList{for(i in 0 until a.length()){val o=a.getJSONObject(i);val pa=o.optJSONArray("permissions")?:JSONArray();val set=buildSet{for(j in 0 until pa.length())add(pa.getString(j))};add(ProfessionalLink(o.getLong("id"),o.getString("name"),o.getString("role"),o.optString("inviteCode"),o.optBoolean("active",true),set))}}}catch(_:Exception){emptyList()}}
