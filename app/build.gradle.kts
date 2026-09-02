@@ -12,8 +12,8 @@ android {
         applicationId = "com.alessandro.nutrition"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "2.4.1"
+        versionCode = 9
+        versionName = "2.5"
     }
 
     buildFeatures { compose = true }
