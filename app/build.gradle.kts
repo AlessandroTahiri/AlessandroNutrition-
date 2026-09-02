@@ -12,8 +12,8 @@ android {
         applicationId = "com.alessandro.nutrition"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "2.3"
+        versionCode = 7
+        versionName = "2.4"
     }
 
     buildFeatures { compose = true }
@@ -23,9 +23,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlin {
-        jvmToolchain(17)
-    }
+    kotlin { jvmToolchain(17) }
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"

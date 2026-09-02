@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="#101D2B">
+
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Alessandro Nutrition" android:textColor="#FFFFFFFF" android:textStyle="bold" android:textSize="20sp"/>
+    <TextView android:id="@+id/w_date" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:textColor="#FFB8C7D9" android:textSize="13sp"/>
+
+    <TextView android:id="@+id/w_water" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="14dp" android:textColor="#FF32D6C5" android:textStyle="bold" android:textSize="18sp"/>
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:layout_marginTop="8dp">
+        <Button android:id="@+id/w_add250" android:layout_width="0dp" android:layout_weight="1" android:layout_height="48dp" android:text="+250 ml"/>
+        <Button android:id="@+id/w_add500" android:layout_width="0dp" android:layout_weight="1" android:layout_height="48dp" android:text="+500 ml"/>
+    </LinearLayout>
+
+    <TextView android:id="@+id/w_meal" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="14dp" android:textColor="#FFF6FAFF" android:textSize="15sp"/>
+    <TextView android:id="@+id/w_supplements" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="10dp" android:textColor="#FFF6FAFF" android:textSize="15sp"/>
+    <TextView android:id="@+id/w_activity" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="10dp" android:textColor="#FFF6FAFF" android:textSize="15sp"/>
+    <TextView android:id="@+id/w_personal" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="10dp" android:textColor="#FFF6FAFF" android:textSize="15sp"/>
+    <TextView android:id="@+id/w_shopping" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="10dp" android:textColor="#FFF6FAFF" android:textSize="15sp"/>
+    <TextView android:id="@+id/w_reminders" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="10dp" android:textColor="#FFB8C7D9" android:textSize="14sp"/>
+</LinearLayout>

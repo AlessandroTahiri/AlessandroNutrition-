@@ -15,5 +15,18 @@
             </intent-filter>
         </activity>
         <receiver android:name=".ReminderReceiver" android:exported="false" />
+        <receiver
+            android:name=".NutritionWidgetProvider"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.alessandro.nutrition.WIDGET_ADD_250" />
+                <action android:name="com.alessandro.nutrition.WIDGET_ADD_500" />
+                <action android:name="com.alessandro.nutrition.WIDGET_REFRESH" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/nutrition_widget_info" />
+        </receiver>
     </application>
 </manifest>
