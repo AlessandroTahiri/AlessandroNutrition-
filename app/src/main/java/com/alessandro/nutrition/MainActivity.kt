@@ -994,7 +994,7 @@ fun CalendarDialog(date:LocalDate,existing:CalendarEvent?=null,onDismiss:()->Uni
                 item{Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)){listOf("Nessuna","Ogni giorno","Ogni settimana","Ogni mese","Ogni anno").forEach{r->FilterChip(selected=!customRecurrence&&recurrence==r,onClick={recurrence=r;customRecurrence=false},label={Text(r)})};FilterChip(selected=customRecurrence,onClick={customRecurrence=true},label={Text("Personalizzata")})}}
                 if(customRecurrence){
                     item{Text("Giorni della settimana",fontWeight=FontWeight.SemiBold)}
-                    item{Row(horizontalArrangement=Arrangement.spacedBy(4.dp)){listOf("L","M","M","G","V","S","D").forEachIndexed{i,n->FilterChip(selected=(i+1) in customDays,onClick={customDays=if((i+1) in customDays)customDays-(i+1) else customDays+(i+1)},label={Text(n)})}}
+                    item{Row(horizontalArrangement=Arrangement.spacedBy(4.dp)){listOf("L","M","M","G","V","S","D").forEachIndexed{i,n->FilterChip(selected=(i+1) in customDays,onClick={customDays=if((i+1) in customDays)customDays-(i+1) else customDays+(i+1)},label={Text(n)})}}}
                     item{OutlinedTextField(every,{every=it.filter(Char::isDigit)},label={Text("Ripeti ogni N settimane")},modifier=Modifier.fillMaxWidth())}
                     item{if(until.isBlank())OutlinedButton(onClick={until=d}){Text("Imposta data di fine") } else DatePickerButton(until){until=it}}
                 }
@@ -1002,7 +1002,7 @@ fun CalendarDialog(date:LocalDate,existing:CalendarEvent?=null,onDismiss:()->Uni
                 item{OutlinedTextField(notes,{notes=it},label={Text("Note / altro da aggiungere")},modifier=Modifier.fillMaxWidth(),minLines=2)}
                 item{Row(verticalAlignment=Alignment.CenterVertically){Text("Promemoria",Modifier.weight(1f));Switch(reminder,{reminder=it})}}
                 if(reminder){
-                    item{Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)){listOf(10,30,60,1440).forEach{m->FilterChip(selected=lead.toIntOrNull()==m,onClick={lead=m.toString()},label={Text(if(m==1440)"1 giorno prima" else if(m==60)"1 ora prima" else "$m min prima")})}}
+                    item{Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)){listOf(10,30,60,1440).forEach{m->FilterChip(selected=lead.toIntOrNull()==m,onClick={lead=m.toString()},label={Text(if(m==1440)"1 giorno prima" else if(m==60)"1 ora prima" else "$m min prima")})}}}
                     item{OutlinedTextField(lead,{lead=it.filter(Char::isDigit)},label={Text("Minuti prima (personalizzato)")},modifier=Modifier.fillMaxWidth())}
                 }
             }
